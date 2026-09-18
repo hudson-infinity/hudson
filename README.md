@@ -80,4 +80,8 @@ Multi-agent and swarm capabilities come after the core execution model. Early re
 
 The next design work is to define the core entities, execution lifecycle, harness interface, durable background processing, security boundaries, observability, and evaluation integration.
 
+Accepted implementation decisions are recorded in [`docs/implementation-decisions`](docs/implementation-decisions/):
+
+- [0001: Rust implementation with language-neutral interfaces](docs/implementation-decisions/0001-rust.md)
+
 The guiding principle is simple: **keep the developer experience approachable and make security foundational.**
