@@ -103,11 +103,13 @@ Language-neutral interfaces do not mean arbitrary code can execute without an ad
 - Bind approvals to specific operations, arguments, authorized approvers, and expiry.
 - Apply current revocations when work resumes; restoring a checkpoint must not restore revoked access.
 - Scope credentials to the required capabilities and keep secrets out of model context and ordinary logs.
-- Isolate hosted customer code and restrict filesystem, network, CPU, memory, and execution time.
+- Isolate hosted customer code through [Hudson Sandbox](https://github.com/hudson-infinity/hudson-sandbox), with enforced filesystem, network, CPU, memory, and execution-time restrictions.
 - Enforce budgets and concurrency limits across parallel operations.
 - Treat retrieved content and tool responses as untrusted data that cannot change authority.
 
 Budget behavior must distinguish enforceable limits from estimates when provider usage cannot be bounded precisely in advance. Rust supports the implementation; authorization and isolation still require explicit design and testing.
+
+Hudson retains business permissions, approvals, credential authority, and budgets. The separate Hudson Sandbox project owns isolated environments, command execution, enforcement of sandbox limits, and cleanup. These are planned responsibilities, not validated security guarantees; see [decision 0002](implementation-decisions/0002-hudson-sandbox.md).
 
 ### Observability and operational controls
 
@@ -149,12 +151,15 @@ The accepted implementation language for the core is **Rust**. The initial API d
 - Include a useful self-hosted path through the core execution, security, observability, and evaluation flow.
 - Make the distinction between development conveniences and production security guarantees explicit.
 - Keep managed cloud operations separate where necessary without making the core product depend on private infrastructure.
+- Document compatible Hudson Sandbox versions, configuration, and host requirements as part of the self-hosted execution path. Its current design targets Firecracker on Linux with KVM; development on other hosts must expose any execution limitations explicitly.
 
 ## Repository scope
 
 Start with one public monorepo containing the runtime, default harness, security, observability, evaluations, SDKs, API, workers, console, CLI, documentation, integrations, and examples.
 
 These are logical ownership boundaries. They do not require one service, process, package, or Rust crate per feature. The implementation layout should follow actual dependency and isolation needs.
+
+Sandbox infrastructure lives outside this monorepo in [hudson-infinity/hudson-sandbox](https://github.com/hudson-infinity/hudson-sandbox). Hudson owns the integration adapter, authorization decisions, and mapping of sandbox operations and results into agent runs. The sandbox repository owns its execution service, host supervision, guest execution, and isolation design.
 
 The README introduces the product, this document defines its goals and feature scope, and implementation decision records explain accepted technical choices. Detailed architecture documents should define the contracts and failure behavior needed to implement these goals.
 
@@ -182,7 +187,7 @@ This milestone establishes the shared execution model. It does not require every
 - **Ecosystem:** grow through integrations, examples, reusable extensions, and contributors.
 - **Enterprise features:** expand administration and organizational controls as concrete requirements emerge.
 
-The initial scope does not include training foundation models, building a general business application for each customer, or developing a custom operating system or sandbox engine. The isolation technology itself remains an implementation decision.
+The initial scope does not include training foundation models, building a general business application for each customer, or developing a custom operating system or hypervisor. Sandbox implementation is maintained in the separate Hudson Sandbox repository. Its [current design](https://github.com/hudson-infinity/hudson-sandbox/blob/main/docs/implementation.md) selects Rust, Temporal, and Firecracker; integration details and validation remain outstanding.
 
 Existing work from the separate `general-harness` project may offer a starting point, but it has not been assessed for Hudson. These goals do not assume that its implementation satisfies any requirement here.
 
@@ -196,11 +201,11 @@ Measure latency, throughput, memory, and execution cost against explicit workloa
 
 - Core entities, lifecycle transitions, and harness extension contracts
 - Durable execution, storage, scheduling, and recovery design
-- Identity, policy, credential, and sandbox architecture
+- Identity, policy, credential, and Hudson Sandbox integration contracts
 - Model and tool adapters, worker protocol, and API compatibility policy
 - Event schemas, artifact storage, retention, and evaluation contracts
 - Initial SDKs, console technology, and packaging
 - Open-source license and managed-cloud feature boundaries
 - Final product and company naming
 
-The accepted Rust decision is the starting point. Remaining choices should be recorded as they are made, without treating proposed features as shipped behavior.
+The accepted [Rust decision](implementation-decisions/0001-rust.md) and [external sandbox decision](implementation-decisions/0002-hudson-sandbox.md) are the starting points. Remaining choices should be recorded as they are made, without treating proposed features as shipped behavior.

@@ -54,6 +54,8 @@ Permissions and approvals must be enforced by the execution system. Instructions
 
 The design calls for explicit access scopes, argument-level tool checks, approvals bound to specific actions, isolated execution, and credentials kept out of model context and ordinary execution records. Custom harnesses and tools must operate within these boundaries too.
 
+Isolated execution will be provided by [Hudson Sandbox](https://github.com/hudson-infinity/hudson-sandbox), a separate repository in the `hudson-infinity` organization. Hudson owns agent behavior, business permissions, approvals, credential authority, and budgets; Hudson Sandbox owns sandbox environments, command execution, resource and network enforcement, and cleanup. Its [implementation design](https://github.com/hudson-infinity/hudson-sandbox/blob/main/docs/implementation.md) selects Rust, Temporal, and Firecracker. Both projects are currently design-only.
+
 ### Evidence shared across monitoring and evaluation
 
 The same execution records should support debugging, operational monitoring, success checks, and regression testing. Completing an execution and satisfying its success criteria are separate outcomes.
@@ -72,6 +74,8 @@ Hudson will start as one public monorepo containing:
 
 These are logical module boundaries, not a commitment to separate services or packages. The public repository is intended to support a useful self-hosted installation. A separate private repository for managed cloud operations can be introduced later if needed.
 
+Sandbox infrastructure is maintained in the separate [hudson-sandbox repository](https://github.com/hudson-infinity/hudson-sandbox). This repository owns its integration with the agent runtime and must document the compatible sandbox dependency for self-hosting.
+
 ## Initial focus
 
 The first milestone is a complete execution flow: define an agent, connect a tool, enforce permissions, pause for approval, recover after a worker interruption, finish with an inspectable result, and turn a failure into a regression test.
@@ -85,5 +89,6 @@ The next design work is to define the core entities, execution lifecycle, harnes
 Accepted implementation decisions are recorded in [`docs/implementation-decisions`](docs/implementation-decisions/):
 
 - [0001: Rust implementation with language-neutral interfaces](docs/implementation-decisions/0001-rust.md)
+- [0002: External sandbox execution through Hudson Sandbox](docs/implementation-decisions/0002-hudson-sandbox.md)
 
 The guiding principle is simple: **keep the developer experience approachable and make security foundational.**
