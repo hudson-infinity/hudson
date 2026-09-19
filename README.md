@@ -6,6 +6,8 @@ Hudson is an open-source-first AI infrastructure platform being designed for tea
 
 > **Status:** Hudson is in product and architecture design. This repository currently documents the intended product; the capabilities below are planned, not implemented.
 
+See [goals and feature scope](docs/goals.md) for the detailed product goals, planned capabilities, and first milestone.
+
 ## Developer experience
 
 **Create agent → connect tools and context → review permissions → test → deploy → monitor and improve.**
