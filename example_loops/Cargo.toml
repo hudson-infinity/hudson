@@ -1,0 +1,9 @@
+[package]
+name = "hudson-loop-examples"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Offline teaching examples for Hudson agent-loop design"
+
+# Keep the teaching examples independent from a future Hudson workspace.
+[workspace]
