@@ -10,6 +10,8 @@ See [goals and feature scope](docs/goals.md) for the detailed product goals, pla
 
 See [agent loop references and offline Rust examples](example_loops/README.md) for source-backed research to inform the default harness. These are teaching examples, not an implemented Hudson runtime.
 
+See the proposed [five-model data design](docs/data-model.md) for Agent, Tool, Run, Operation, and Event, including versioning, approvals, and recovery boundaries.
+
 ## Developer experience
 
 **Create agent → connect tools and context → review permissions → test → deploy → monitor and improve.**
