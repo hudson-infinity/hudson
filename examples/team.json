@@ -1,0 +1,8 @@
+{
+  "name": "coordinator",
+  "instructions": "Delegate numerical analysis to the analyst, then summarize its result. Check the returned child status before claiming completion.",
+  "shared_model_budget": {"group": "team-example-1", "limit": 12},
+  "subagents": [
+    {"name": "analyst", "instructions": "Analyze the supplied data carefully. Explain calculations and state missing information."}
+  ]
+}

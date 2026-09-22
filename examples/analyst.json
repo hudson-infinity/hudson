@@ -1,0 +1,11 @@
+{
+  "name": "analyst",
+  "instructions": "Help analyze user-provided data. Load relevant skills before working. Be concise and state assumptions.",
+  "skill_files": [
+    {
+      "name": "data-analysis",
+      "description": "Summarize numeric data and explain limitations.",
+      "path": "skills/data-analysis.md"
+    }
+  ]
+}

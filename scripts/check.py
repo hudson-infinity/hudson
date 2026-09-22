@@ -1,0 +1,53 @@
+"""Run local Hudson checks with loopback model stubs; never runs live_provider.py."""
+import argparse
+import os
+import pathlib
+import shlex
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+LOCAL_SMOKES = ('providers', 'subagents', 'evaluation', 'python_tool')
+DATABASE_SMOKES = ('approval', 'api', 'recovery', 'child_approval', 'user_input')
+CONFIGS = ('analyst.json', 'data-agent.json', 'team.json', 'python-tool/agent.json')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--database', help='Dedicated local PostgreSQL test database on /tmp; enables durable recovery checks')
+    args = parser.parse_args()
+    env = os.environ.copy()
+    # Smoke scripts use target/debug. Keep Cargo and the scripts on the same path.
+    env['CARGO_TARGET_DIR'] = str(ROOT / 'target')
+    for name in ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY', 'HUDSON_TEST_DATABASE'):
+        env.pop(name, None)
+    if args.database:
+        env['HUDSON_TEST_DATABASE'] = args.database
+
+    def run(*command):
+        print('\n> ' + shlex.join(map(str, command)), flush=True)
+        subprocess.run(command, cwd=ROOT, env=env, check=True)
+
+    run('cargo', 'fmt', '--all', '--', '--check')
+    test = ['cargo', 'test', '--locked', '--workspace', '--all-features']
+    if args.database:
+        test += ['--', '--include-ignored']
+    run(*test)
+    run('cargo', 'clippy', '--locked', '--workspace', '--all-targets', '--all-features', '--', '-D', 'warnings')
+    run('cargo', 'check', '--locked', '-p', 'hudson-core', '--no-default-features')
+    run('cargo', 'build', '--locked', '-p', 'hudson-worker', '-p', 'hudson-server', '-p', 'hudson-cli')
+    for config in CONFIGS:
+        run('target/debug/hudson-worker', '--config', 'examples/' + config, '--check')
+    for name in LOCAL_SMOKES + (DATABASE_SMOKES if args.database else ()):
+        run(sys.executable, 'scripts/smoke_' + name + '.py')
+    print('\nPASS: local checks complete; no live-provider checks were run.')
+    if not args.database:
+        print('PostgreSQL and durable recovery checks were skipped. Use --database to include them.')
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except subprocess.CalledProcessError as error:
+        print(f'Check failed with exit code {error.returncode}.', file=sys.stderr)
+        sys.exit(1)

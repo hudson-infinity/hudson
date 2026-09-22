@@ -2,7 +2,7 @@
 
 Status: Product and architecture design. Updated: 2026-09-19.
 
-This document defines what Hudson aims to provide and how we will judge the initial product. Features described here are planned, not implemented. Accepted technical choices live in [implementation decisions](implementation-decisions/); this document does not select the remaining stack or define a release schedule.
+This document defines what Hudson aims to provide and how we will judge the initial product. These are product targets; the [development guide](development.md) distinguishes the initial implementation from remaining work. Accepted technical choices live in [implementation decisions](implementation-decisions/); this document does not select the remaining stack or define a release schedule.
 
 ## Purpose
 

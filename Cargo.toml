@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/hudson-harness", "crates/hudson-core", "crates/hudson-server", "crates/hudson-worker", "crates/hudson-cli"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[workspace.dependencies]
+hudson-harness = { path = "crates/hudson-harness" }
+hudson-core = { path = "crates/hudson-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+sha2 = "0.10"
+jsonschema = { version = "0.56", default-features = false }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
+axum = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

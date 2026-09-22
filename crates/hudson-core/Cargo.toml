@@ -1,0 +1,23 @@
+[package]
+name = "hudson-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+fixtures = []
+
+[dependencies]
+hudson-harness.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+jsonschema.workspace = true
+reqwest.workspace = true
+postgres = { version = "0.19", features = ["with-serde_json-1"] }
+
+[lints]
+workspace = true

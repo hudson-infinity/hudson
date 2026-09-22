@@ -1,98 +1,188 @@
 # Hudson
 
-**One platform for building, running, securing, observing, and evaluating AI agents.**
+A generic Rust agent harness. Define instructions, connect tools, and let Hudson
+run the model → tools → results → verification loop.
 
-Hudson is an open-source-first AI infrastructure platform being designed for teams ranging from small businesses to large enterprises. Companies bring their tools, context, and instructions. Hudson provides the runtime and an extensible default harness to execute agents, with explicit permissions, approvals, budgets, and success criteria.
+The same loop supports coding services, data processing, analysis, and delegated
+work. Domain behavior belongs in tools, skills, and agent configuration.
 
-> **Status:** Hudson is in product and architecture design. This repository currently documents the intended product; the capabilities below are planned, not implemented.
+## Run an agent
 
-See [goals and feature scope](docs/goals.md) for the detailed product goals, planned capabilities, and first milestone.
+Requires Rust 1.92.0 (pinned in this repository) and an `OPENAI_API_KEY` in your
+process environment.
 
-See [agent loop references and offline Rust examples](example_loops/README.md) for source-backed research to inform the default harness. These are teaching examples, not an implemented Hudson runtime.
+```sh
+cargo run --locked -p hudson-worker -- --config examples/analyst.json \
+  --task 'Find the mean of 10, 20, and 30'
+```
 
-See the proposed [five-model data design](docs/data-model.md) for Agent, Tool, Run, Operation, and Event, including versioning, approvals, and recovery boundaries.
+This version targets **OpenAI, Anthropic, and Gemini** text-and-tool agents, with
+GPT as the default. Anthropic uses its native Messages protocol; Gemini uses its
+OpenAI-compatible endpoint. Custom compatible endpoints are also configurable.
+Model-specific capabilities vary; native image/audio/video workflows are outside
+this version. See the [implementation audit](docs/implementation-status.md) for
+verification evidence and current limitations.
 
-## Developer experience
+Task inputs can be validated with `input_schema`. The worker accepts structured
+JSON via `--input-file`; subagents can advertise and receive structured tasks too.
 
-**Create agent → connect tools and context → review permissions → test → deploy → monitor and improve.**
+A minimal configuration:
 
-The goal is to make a useful agent straightforward to build while giving teams control over what it can access, what it can do, and how its success is measured.
+```json
+{
+  "name": "assistant",
+  "instructions": "Help with the user's task. State assumptions and be concise."
+}
+```
 
-An agent should be able to run interactively or continue in the background, with the same execution model, security controls, and inspectable history.
+## Connect your tools and specialists
 
-## What Hudson will include
+- **HTTP tools:** configure endpoint, JSON input schema, effect, and optional
+  credential environment variable. Hudson validates arguments and sends an
+  operation ID as the service's idempotency key.
+- **Rust tools:** register application functions with `ToolRegistry`.
+- **Skills:** provide named instruction bodies; the model loads them on demand.
+- **Subagents:** nest agent definitions under `subagents`. Each child has its own
+  model, tools, instructions, and limits. The tree shares a model-call budget.
+- **Goals:** attach an objective and JSON Schema success contract to a run.
 
-| Capability | Intended responsibility |
-| --- | --- |
-| **Agent runtime** | Execution lifecycle, persistent state, cancellation, resource limits, and recovery. |
-| **Default harness** | A ready-to-use agent loop for model calls, tool execution, and context management, with extension points for custom behavior. |
-| **Background processing** | Long-running, scheduled, and event-triggered agents that continue without an active user session. |
-| **Security** | Enforced tool permissions, scoped credentials, isolation, approval workflows, and budgets. |
-| **Observability** | Inspectable records of actions, tool calls, costs, failures, approvals, and results. |
-| **Custom evaluations** | Customer-defined test cases and evaluators, version comparisons, and production failures turned into regression tests. |
-| **Deployment** | Local development, a useful self-hosted installation, and a managed cloud offering. |
+See [analyst configuration](examples/analyst.json), [structured data agent](examples/data-agent.json), [team configuration](examples/team.json),
+the [runnable Python HTTP tool](examples/python-tool/README.md),
+and the [development guide](docs/development.md) for configuration and library APIs.
 
-These capabilities should work as one product, sharing execution state, permissions, and evidence.
+## Keep runs in PostgreSQL
 
-## Architecture direction
+Create a dedicated local PostgreSQL database, then add storage options:
 
-### A durable run at the center
+```sh
+cargo run --locked -p hudson-worker -- --config examples/analyst.json \
+  --database hudson --namespace my-project --request-key analysis-001 \
+  --task 'Find the mean of 10, 20, and 30'
+```
 
-A run represents one execution of an agent. Model calls, tool operations, approvals, checkpoints, costs, and results connect back to that run.
+Resume with the same config and storage options using `--resume <run_uuid>`.
+Without `--database`, state lives in memory for that process. The local worker
+connects through `/tmp`; library users can provide a configured PostgreSQL client.
+The initial backend stores one transactional JSONB document per namespace and
+serializes its writes. It suits small deployments, not high-throughput workloads.
 
-Runs should survive worker interruptions, wait for approvals or external events without holding a worker, and resume from persisted state. Recovery must account for external actions that may already have happened: an uncertain write should be reconciled before a retry that could duplicate its effects.
+## Use the HTTP API
 
-### A general-purpose runtime and extensible harness
+Start the same configured agent for non-Rust applications:
 
-The runtime owns execution, persistence, scheduling, permissions, budgets, cancellation, and recovery. The harness decides what to do next through an interface controlled by the runtime.
+```sh
+cargo run --locked -p hudson-server -- --config examples/analyst.json \
+  --database hudson --namespace my-project
+curl -X POST http://127.0.0.1:4318/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"Find the mean of 10, 20, and 30","request_key":"analysis-002"}'
+```
 
-The default harness provides a simple loop:
+The CLI uses that same API:
 
-**Build context → call model → request tools → inspect results → continue or finish.**
+```sh
+cargo run --locked -p hudson-cli -- start --task 'Find the mean of 10, 20, and 30'
+cargo run --locked -p hudson-cli -- start --input-file task.json --request-key analysis-003
+cargo run --locked -p hudson-cli -- resume RUN_UUID
+```
 
-Teams should be able to specialize planning, memory, context management, and verification while retaining the runtime's execution and security guarantees.
+`--input-file -` reads JSON from stdin. Use `--url` before the command to select a
+different server. Inputs may be JSON objects, arrays, strings, or other JSON values.
 
-### Security enforced outside the model
+The API returns `run_id` immediately and runs independently of the HTTP connection.
+Read `/runs/{id}`, `/runs/{id}/events`, and `/runs/{id}/children` (CLI: `children RUN_UUID`).
+Child runs expose their pinned agent reference and can be resumed with the same
+tree configuration through either the API or worker. POST `/runs/{id}/resume` after a server
+restart. An approval wait includes an operation ID: inspect `/operations/{id}`,
+then POST `{"approved":true}` to `/operations/{id}/approval` to resume execution.
+POST `/runs/{id}/cancel` to request cancellation, including during model/tool IO.
+Unknown effects stay unresolved until an operator reconciles them.
 
-Permissions and approvals must be enforced by the execution system. Instructions, model output, retrieved documents, and tool responses cannot grant authority.
+This server binds only to loopback and uses one local developer identity. It runs
+one configured agent tree per process, with sequential execution. It is a local
+integration API; authentication and hosted multi-tenant serving are not implemented.
+Without `--database`, its state is in memory. `--demo` selects the fixture preview.
 
-The design calls for explicit access scopes, argument-level tool checks, approvals bound to specific actions, isolated execution, and credentials kept out of model context and ordinary execution records. Custom harnesses and tools must operate within these boundaries too.
+## Recover and evaluate
 
-Isolated execution will be provided by [Hudson Sandbox](https://github.com/hudson-infinity/hudson-sandbox), a separate repository in the `hudson-infinity` organization. Hudson owns agent behavior, business permissions, approvals, credential authority, and budgets; Hudson Sandbox owns sandbox environments, command execution, resource and network enforcement, and cleanup. Its [implementation design](https://github.com/hudson-infinity/hudson-sandbox/blob/main/docs/implementation.md) selects Rust, Temporal, and Firecracker. Both projects are currently design-only.
+Local operator commands can inspect an interrupted attempt and record a verified
+tool receipt before resuming. See [recovery](docs/recovery.md) for the exact steps.
 
-### Evidence shared across monitoring and evaluation
+Compare two agent versions against the same JSON cases:
 
-The same execution records should support debugging, operational monitoring, success checks, and regression testing. Completing an execution and satisfying its success criteria are separate outcomes.
+```sh
+cargo run --locked -p hudson-worker -- --config agent-v1.json \
+  --evaluate cases.json --compare-config agent-v2.json
+```
 
-Evaluations should exercise the same runtime used in production, with controlled fixtures or isolated integrations where appropriate. Teams should be able to investigate a production failure, turn it into a test, and compare agent versions against it.
+See [evaluation](docs/evaluation.md) for the case format and report. Evaluations use
+the same runtime and policies as ordinary runs; configure isolated tool services.
 
-## Repository direction
+The [HTTP API guide](docs/api.md) and [OpenAPI contract](docs/openapi.json)
+describe all current endpoints. Running servers expose `GET /openapi.json`.
 
-Hudson will start as one public monorepo containing:
+## Check the implementation
 
-- Runtime and default harness
-- Security, observability, and evaluation modules
-- SDK, API, workers, and CLI
-- Console
-- Documentation, integrations, and examples
+```sh
+python3 scripts/check.py
+# Include PostgreSQL and process-recovery checks:
+python3 scripts/check.py --database hudson_harness_test_20260921
+```
 
-These are logical module boundaries, not a commitment to separate services or packages. The public repository is intended to support a useful self-hosted installation. A separate private repository for managed cloud operations can be introduced later if needed.
+The suite uses local model stubs and makes no paid model calls. The database must
+already exist on the local `/tmp` socket. See the [development guide](docs/development.md)
+for the covered checks and separate live-provider checks.
 
-Sandbox infrastructure is maintained in the separate [hudson-sandbox repository](https://github.com/hudson-infinity/hudson-sandbox). This repository owns its integration with the agent runtime and must document the compatible sandbox dependency for self-hosting.
+## Architecture
 
-## Initial focus
+```text
+Agent configuration + task
+          ↓
+Runtime: policies, operations, budgets, persistence
+          ↕
+AgentLoop: model → tools → model → verify → complete
+          ↓
+Model adapters / application tools / child runtimes
+```
 
-The first milestone is a complete execution flow: define an agent, connect a tool, enforce permissions, pause for approval, recover after a worker interruption, finish with an inspectable result, and turn a failure into a regression test.
+`hudson-harness` owns the portable loop and checkpoints. `hudson-core` owns the
+five primary models—Agent, Tool, Run, Operation, Event—and execution controls.
+`hudson-worker` and `hudson-server` share the configuration builder in
+`hudson-core`. The server exposes configured runs over HTTP; `hudson-cli` submits arbitrary
+inputs and provides inspection, approval, cancellation, and resume commands.
 
-Multi-agent and swarm capabilities come after the core execution model. Early research will focus on runtime reliability, security, harness behavior, and evaluations. The open-source ecosystem will grow through integrations, examples, and contributors.
+## Verification and current limits
 
-## Current work
+```sh
+cargo test --locked --workspace --all-features
+cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
+cargo build --locked -p hudson-worker
+python3 scripts/smoke_subagents.py
+```
 
-The next design work is to define the core entities, execution lifecycle, harness interface, durable background processing, security boundaries, observability, and evaluation integration.
+Live GPT and Gemini runs completed tool cycles. Offline tests cover
+provider mappings, HTTP tools, approvals, limits, goals, and configured subagent
+execution. Explicit PostgreSQL tests cover reconnect and shared-budget persistence.
+Database tests are opt-in; ordinary workspace tests do not run them.
 
-Accepted implementation decisions are recorded in [`docs/implementation-decisions`](docs/implementation-decisions/):
+The local worker uses one fixed developer identity. Configured HTTP tools may
+require approval; delegation is preauthorized. Library callers can configure policies.
+Uncertain effects are never automatically replayed. Operator-assisted interruption
+marking and tool receipt reconciliation exist; automated worker ownership and full
+crash recovery remain unfinished. Child cancellation propagation and cooperative joining are implemented; background
+concurrent scheduling, currency accounting, automatic skill-file discovery,
+and hosted product integration remain unfinished. No sandbox isolation is implemented;
+application Rust tools are trusted code.
 
-- [0001: Rust implementation with language-neutral interfaces](docs/implementation-decisions/0001-rust.md)
-- [0002: External sandbox execution through Hudson Sandbox](docs/implementation-decisions/0002-hudson-sandbox.md)
+[Product goals](docs/goals.md), [data model](docs/data-model.md),
+[code structure](docs/code-structure.md), and
+[implementation decisions](docs/implementation-decisions/) describe the wider design.
+Sandbox infrastructure belongs to the separate
+[Hudson Sandbox repository](https://github.com/hudson-infinity/hudson-sandbox).
 
-The guiding principle is simple: **keep the developer experience approachable and make security foundational.**
+See the [implementation audit](docs/implementation-status.md) for requirement-by-requirement evidence and remaining work.
+
+For interactive clarification, enable `"allow_user_input": true` in the agent
+configuration. A waiting agent’s question appears in its run status. Answer with
+`hudson-cli reply RUN_UUID --text "Your answer" --request-key answer-1 --question-id QUESTION_ID`; Hudson
+continues the saved run. See the [development guide](docs/development.md).

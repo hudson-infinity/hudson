@@ -1,10 +1,12 @@
 # Hudson data model
 
-Status: proposed design, 2026-09-21. No runtime, database schema, or recovery guarantee is implemented by this document.
+Status: target design, 2026-09-21. The [first implementation slice](development.md) implements a subset of these fields and in-memory behaviors. This document specifies the full target, not a claim of database persistence or crash-recovery guarantees.
 
 Hudson has five top-level models: **Agent, Tool, Run, Operation, Event**. Developers define agents and tools; Hudson manages runs, operations, and events. Coding, data, and support agents use these same models.
 
 This is a logical schema. Nested values are typed structures, not additional public resources. Storage may normalize them internally. A database, orchestration engine, and loop dependency remain unselected.
+
+The proposed [code structure](code-structure.md) maps these models to Rust modules and execution responsibilities.
 
 ## Relationships
 
@@ -174,4 +176,4 @@ Prove one recoverable run with model/tool operations, one bound approval, record
 
 Required acceptance cases: cross-workspace reference rejection, pinned versions after publication changes, submission deduplication, two-worker contention, changed/expired/revoked approval rejection, restart during an approval wait, lost write acknowledgement, partial parallel results, repeated input delivery, cancellation during an active effect, incompatible checkpoint versions, and required-check failure.
 
-The [loop composition proposal](../example_loops/hudson-proposal.md), [integration checklist](../example_loops/evaluation-checklist.md), and [product goals](goals.md) provide the surrounding requirements. This document does not replace them or choose a loop library.
+The [product goals](goals.md) provide the surrounding requirements. See the [development guide](development.md) for current implementation boundaries.
