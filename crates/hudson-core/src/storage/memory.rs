@@ -10,6 +10,11 @@ pub(crate) struct Data {
     #[serde(default)]
     pub memory_snapshots: BTreeMap<Uuid, Vec<crate::memory::MemoryRecord>>,
     #[serde(default)]
+    pub team_tasks: BTreeMap<Uuid, crate::coordination::TeamTask>,
+    #[serde(default, with = "super::pairs")]
+    pub coordination_policies:
+        BTreeMap<(String, VersionRef), crate::coordination::CoordinationPolicy>,
+    #[serde(default)]
     pub memories: BTreeMap<Uuid, crate::memory::MemoryRecord>,
     #[serde(default)]
     pub context_artifacts: BTreeMap<String, crate::context::ContextArtifact>,

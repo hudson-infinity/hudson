@@ -42,3 +42,5 @@ pub mod evaluation;
 
 pub mod context;
 pub mod memory;
+
+pub mod coordination;

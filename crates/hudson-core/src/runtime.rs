@@ -150,6 +150,9 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
             self.finish_cancellation(actor, id)?;
             return self.store.inspect(actor, id);
         }
+        if !self.store.dependencies_ready(actor, id)? {
+            return self.store.inspect(actor, id);
+        }
         if !run.pending_operations.is_empty() {
             for operation_id in &run.pending_operations {
                 let status = self.store.read(|d| Ok(d.operations[operation_id].status))?;
@@ -199,6 +202,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                 }
             }
             crate::memory::append_snapshot(d, id, &mut config.instructions)?;
+            crate::coordination::append_dependency_context(d, id, &mut config.instructions)?;
             Ok(config)
         })?;
         let context_policy = self.store.read(|d| {
