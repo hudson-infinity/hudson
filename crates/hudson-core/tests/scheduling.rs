@@ -22,6 +22,10 @@ fn scheduling_intent_is_atomic_scoped_and_idempotent() {
         )
     };
     let id = submit(Some(target.clone())).unwrap();
+    runtime
+        .store
+        .validate_schedule(&actor, id, Some(&target))
+        .unwrap();
     assert_eq!(submit(Some(target.clone())).unwrap(), id);
     assert!(submit(None).is_err());
     let other = ScheduleTarget {
@@ -29,6 +33,10 @@ fn scheduling_intent_is_atomic_scoped_and_idempotent() {
         ..target.clone()
     };
     assert!(submit(Some(other.clone())).is_err());
+    assert!(runtime
+        .store
+        .validate_schedule(&actor, id, Some(&other))
+        .is_err());
     assert_eq!(
         runtime
             .store
@@ -45,6 +53,10 @@ fn scheduling_intent_is_atomic_scoped_and_idempotent() {
         .pending_schedules(&stranger, &fixtures::agent_ref(), &target, 10)
         .unwrap()
         .is_empty());
+    assert!(runtime
+        .store
+        .validate_schedule(&stranger, id, Some(&target))
+        .is_err());
     assert!(runtime
         .store
         .acknowledge_schedule(&stranger, id, &target)

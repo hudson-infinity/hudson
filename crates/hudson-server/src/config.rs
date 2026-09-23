@@ -9,6 +9,9 @@ pub struct Args {
     pub config: Option<std::path::PathBuf>,
     #[arg(long, requires = "config")]
     pub database: Option<String>,
+    /// Persist submissions for a separate Temporal worker; requires durable storage.
+    #[arg(long, requires = "database")]
+    pub temporal_task_queue: Option<String>,
     #[arg(long, default_value = "hudson")]
     pub namespace: String,
     #[arg(long, default_value_t = 4318)]

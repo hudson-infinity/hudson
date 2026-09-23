@@ -378,16 +378,28 @@ fn question_survives_worker_restart_with_postgres() {
 #[test]
 #[ignore = "requires local PostgreSQL and starts separate Temporal worker/client processes"]
 fn background_returns_without_worker_and_foreground_waits_for_same_run() {
-    cli_scenario(false);
+    cli_scenario(SubmissionMode::Direct);
 }
 
 #[test]
 #[ignore = "requires local PostgreSQL and separate Temporal worker/client processes"]
 fn worker_recovers_submission_without_a_temporal_start() {
-    cli_scenario(true);
+    cli_scenario(SubmissionMode::FailedClient);
 }
 
-fn cli_scenario(recover: bool) {
+#[test]
+#[ignore = "requires built hudson-server, PostgreSQL and a local Temporal server"]
+fn api_submission_survives_api_exit_and_runs_on_separate_worker() {
+    cli_scenario(SubmissionMode::Http);
+}
+
+enum SubmissionMode {
+    Direct,
+    FailedClient,
+    Http,
+}
+
+fn cli_scenario(mode: SubmissionMode) {
     use std::process::{Child, Command, Stdio};
     struct Process(Child);
     impl Drop for Process {
@@ -437,7 +449,7 @@ fn cli_scenario(recover: bool) {
                     .stdout(Stdio::piped()).stderr(Stdio::piped());
                 command
             };
-            if recover {
+            if !matches!(mode, SubmissionMode::Direct) {
                 let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
                 let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
                 let tree = hudson_core::configured::Configuration::load(file.path()).unwrap()
@@ -453,10 +465,45 @@ fn cli_scenario(recover: bool) {
                     Some(hudson_temporal::ExecutionClient::schedule_target(&namespace, &namespace)),
                 ).unwrap();
                 drop(tree);
+                let id: uuid::Uuid = if matches!(mode, SubmissionMode::Http) {
+                    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                    let api_port = socket.local_addr().unwrap().port();
+                    drop(socket);
+                    let binary = std::path::Path::new(env!("CARGO_BIN_EXE_hudson-temporal")).with_file_name("hudson-server");
+                    assert!(binary.exists(), "build hudson-server before this integration test");
+                    let api = Process(Command::new(binary).args([
+                        "--config", file.path().to_str().unwrap(), "--database", &database,
+                        "--namespace", &namespace, "--temporal-task-queue", &namespace,
+                        "--port", &api_port.to_string(),
+                    ]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap());
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    while std::net::TcpStream::connect(("127.0.0.1", api_port)).is_err() {
+                        assert!(std::time::Instant::now() < deadline, "API did not start");
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                    let id = tokio::runtime::Runtime::new().unwrap().block_on(async {
+                        let client = reqwest::Client::new();
+                        let mut receipts = vec![];
+                        for _ in 0..2 {
+                            let response = client.post(format!("http://127.0.0.1:{api_port}/runs"))
+                                .header("content-type", "application/json")
+                                .body(r#"{"input":{"task":"finish"},"request_key":"api-task"}"#)
+                                .send().await.unwrap();
+                            assert_eq!(response.status().as_u16(), 202);
+                            receipts.push(serde_json::from_str::<serde_json::Value>(&response.text().await.unwrap()).unwrap());
+                        }
+                        assert_eq!(receipts[0], receipts[1]);
+                        receipts[0]["run_id"].as_str().unwrap().parse().unwrap()
+                    });
+                    drop(api); // No API process or client remains when the worker starts.
+                    id
+                } else {
                 let interrupted = output(command().env("TEMPORAL_ADDRESS", "http://[invalid").args(["run","--input-file",input.path().to_str().unwrap(),"--request-key","task-1","--background"]).spawn().unwrap());
                 assert!(!interrupted.status.success());
                 let stderr = String::from_utf8(interrupted.stderr).unwrap();
-                let id: uuid::Uuid = stderr.lines().find_map(|line| line.strip_prefix("Run: ")).expect("run was persisted before connection failure").parse().unwrap();
+                let failed_id: uuid::Uuid = stderr.lines().find_map(|line| line.strip_prefix("Run: ")).expect("run was persisted before connection failure").parse().unwrap();
+                    failed_id
+                };
                 let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
                 let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
                 assert_eq!(store.inspect(&actor, id).unwrap().status, RunStatus::Queued);

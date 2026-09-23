@@ -38,13 +38,19 @@ impl ModelExecutor for NoModel {
 type Control = Runtime<AgentLoop, NoModel, ToolRegistry>;
 enum Driver {
     Demo(DemoRuntime),
-    Configured(Box<ConfiguredTree>),
+    Configured(
+        Box<ConfiguredTree>,
+        Option<hudson_core::scheduling::ScheduleTarget>,
+    ),
 }
 impl Driver {
     fn tick(&mut self, actor: &Actor, id: Uuid) -> Result<RunView, Error> {
         match self {
             Self::Demo(runtime) => runtime.tick(actor, id),
-            Self::Configured(runtime) => runtime.tick(actor, id),
+            Self::Configured(runtime, None) => runtime.tick(actor, id),
+            Self::Configured(_, Some(_)) => Err(Error::Unsupported(
+                "scheduled host cannot execute locally".into(),
+            )),
         }
     }
 }
@@ -60,6 +66,7 @@ struct App {
     bindings: BTreeMap<VersionRef, Option<Goal>>,
     model_budget: Option<hudson_core::budgets::ModelBudgetBinding>,
     fixture: bool,
+    schedule: Option<hudson_core::scheduling::ScheduleTarget>,
 }
 struct ApiError(Error);
 impl From<Error> for ApiError {
@@ -87,6 +94,8 @@ impl App {
         self.control.lock().map_err(|_| unavailable())
     }
     fn validate_binding(&self, id: Uuid) -> Result<(), ApiError> {
+        self.store
+            .validate_schedule(&self.actor, id, self.schedule.as_ref())?;
         let run = self.store.inspect(&self.actor, id)?;
         let goal = self.bindings.get(&run.agent_ref).ok_or_else(|| {
             ApiError(Error::Conflict(
@@ -101,6 +110,10 @@ impl App {
     }
     fn drive(&self, id: Uuid) -> Result<(), ApiError> {
         self.validate_binding(id)?;
+        if self.schedule.is_some() {
+            // A separate Temporal worker publishes intent and observes saved controls.
+            return Ok(());
+        }
         // Duplicate submissions/resumes never enqueue another copy of an active run.
         {
             let mut active = self.active.lock().map_err(|_| unavailable())?;
@@ -177,12 +190,13 @@ async fn submit(
             )
             .submit(&app.actor, app.agent.clone(), body.input, body.request_key)?
         } else {
-            app.lock()?.submit_with_goal(
+            app.lock()?.submit_scheduled(
                 &app.actor,
                 app.agent.clone(),
                 body.input,
                 body.request_key,
                 app.goal.clone(),
+                app.schedule.clone(),
             )?
         };
         app.drive(id)?;
@@ -295,6 +309,9 @@ async fn approve(
 }
 async fn cancel(State(app): State<App>, Path(id): Path<Uuid>) -> Result<Json<Value>, ApiError> {
     blocking(move || {
+        if let Some(target) = &app.schedule {
+            app.store.validate_schedule(&app.actor, id, Some(target))?;
+        }
         app.lock()?.cancel(&app.actor, id)?;
         Ok(Json(json!({"run_id":id})))
     })
@@ -310,14 +327,19 @@ fn assemble(
     mode: &'static str,
 ) -> Router {
     let bindings = match &driver {
-        Driver::Configured(tree) => tree.bindings(),
+        Driver::Configured(tree, _) => tree.bindings(),
         Driver::Demo(_) => [(agent.clone(), goal.clone())].into(),
     };
     let model_budget = match &driver {
-        Driver::Configured(tree) => tree.runtime.model_budget_binding(),
+        Driver::Configured(tree, _) => tree.runtime.model_budget_binding(),
         Driver::Demo(runtime) => runtime.model_budget_binding(),
     };
+    let schedule = match &driver {
+        Driver::Configured(_, target) => target.clone(),
+        Driver::Demo(_) => None,
+    };
     let app = App {
+        schedule,
         model_budget: model_budget.clone(),
         bindings,
         driver: Arc::new(Mutex::new(driver)),
@@ -378,7 +400,7 @@ pub fn configured(tree: ConfiguredTree, actor: Actor, durable: bool) -> Router {
     let agent = tree.reference.clone();
     let goal = tree.goal.clone();
     assemble(
-        Driver::Configured(Box::new(tree)),
+        Driver::Configured(Box::new(tree), None),
         store,
         actor,
         agent,
@@ -386,6 +408,26 @@ pub fn configured(tree: ConfiguredTree, actor: Actor, durable: bool) -> Router {
         durable,
         "configured",
     )
+}
+
+pub fn scheduled(
+    tree: ConfiguredTree,
+    actor: Actor,
+    target: hudson_core::scheduling::ScheduleTarget,
+) -> Result<Router, Error> {
+    target.validate()?;
+    let store = tree.runtime.store.clone();
+    let agent = tree.reference.clone();
+    let goal = tree.goal.clone();
+    Ok(assemble(
+        Driver::Configured(Box::new(tree), Some(target)),
+        store,
+        actor,
+        agent,
+        goal,
+        true,
+        "temporal",
+    ))
 }
 
 #[cfg(test)]
@@ -449,6 +491,89 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         panic!("run did not reach {status}");
+    }
+
+    #[tokio::test]
+    async fn scheduled_api_persists_without_local_execution_and_fences_other_queues() {
+        let (app, other, local, store, actor, agent, target) = tokio::task::spawn_blocking(|| {
+            let path = std::env::temp_dir().join(format!("hudson-api-{}.json", Uuid::new_v4()));
+            std::fs::write(
+                &path,
+                json!({"name":"scheduled-test", "instructions":"finish",
+                "endpoint":"http://127.0.0.1:9/chat", "api_key_env":null})
+                .to_string(),
+            )
+            .unwrap();
+            let store = Store::default();
+            let actor = fixtures::actor();
+            let build = || {
+                hudson_core::configured::Configuration::load(&path)
+                    .unwrap()
+                    .build_temporal_tree(store.clone(), &actor)
+                    .unwrap()
+            };
+            let tree = build();
+            let agent = tree.reference.clone();
+            let target = hudson_core::scheduling::ScheduleTarget {
+                scheduler: "temporal:api-test".into(),
+                task_queue: "first".into(),
+            };
+            let app = scheduled(tree, actor.clone(), target.clone()).unwrap();
+            let other = scheduled(
+                build(),
+                actor.clone(),
+                hudson_core::scheduling::ScheduleTarget {
+                    task_queue: "other".into(),
+                    ..target.clone()
+                },
+            )
+            .unwrap();
+            let local = configured(
+                hudson_core::configured::Configuration::load(&path)
+                    .unwrap()
+                    .build_tree(store.clone(), &actor)
+                    .unwrap(),
+                actor.clone(),
+                true,
+            );
+            std::fs::remove_file(path).unwrap();
+            (app, other, local, store, actor, agent, target)
+        })
+        .await
+        .unwrap();
+        let (_, health) = request(&app, "GET", "/health", Value::Null).await;
+        assert_eq!(health["mode"], "temporal");
+        let body = json!({"input":"finish", "request_key":"one"});
+        let (status, receipt) = request(&app, "POST", "/runs", body.clone()).await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let id = receipt["run_id"].as_str().unwrap();
+        let (_, repeated) = request(&app, "POST", "/runs", body).await;
+        assert_eq!(receipt, repeated);
+        let (_, view) = request(&app, "GET", &format!("/runs/{id}"), Value::Null).await;
+        assert_eq!(view["status"], "queued");
+        let parsed = Uuid::parse_str(id).unwrap();
+        assert!(store.operations(&actor, parsed).unwrap().is_empty());
+        assert_eq!(
+            store
+                .pending_schedules(&actor, &agent, &target, 100)
+                .unwrap(),
+            vec![parsed]
+        );
+        for action in ["resume", "cancel"] {
+            let (status, _) =
+                request(&other, "POST", &format!("/runs/{id}/{action}"), json!({})).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+        }
+        let (status, _) = request(&local, "POST", &format!("/runs/{id}/resume"), json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, _) = request(&app, "POST", &format!("/runs/{id}/resume"), json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = request(&app, "POST", &format!("/runs/{id}/cancel"), json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(store
+            .pending_schedules(&actor, &agent, &target, 100)
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]

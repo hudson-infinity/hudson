@@ -563,7 +563,8 @@
           "mode": {
             "enum": [
               "fixture",
-              "configured"
+              "configured",
+              "temporal"
             ]
           },
           "durable": {

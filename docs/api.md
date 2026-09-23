@@ -48,3 +48,37 @@ covers the parent only; child usage belongs to each child run.
 
 Server tests compile the schemas and validate HTTP responses against this
 contract. The standard `scripts/check.py` command includes those tests.
+
+## Separate API admission from Temporal execution
+
+Start the API with durable storage and a task queue:
+
+```sh
+cargo run --locked -p hudson-server -- --config examples/analyst.json \
+  --database hudson --namespace my-project --temporal-task-queue my-agents
+```
+
+Run the matching worker in another process:
+
+```sh
+cargo run --locked -p hudson-temporal -- --config examples/analyst.json \
+  --database hudson --namespace my-project --task-queue my-agents worker
+```
+
+The existing `POST /runs` payload and run inspection/control routes remain the
+same. The API commits the run and scheduling intent together, then returns `202`.
+Acceptance means the request is saved, not that a worker has started or completed
+it. The API makes no model or tool calls in this mode; it does not need a Temporal
+connection. A matching worker publishes saved requests and owns execution. An API
+exit after acceptance does not discard the work. Reuse `request_key` for retries.
+
+`GET /health` reports `mode: "temporal"`. `--temporal-task-queue` requires
+`--database`. Both hosts must use the same configuration, storage namespace and
+task queue. Controls validate the root scheduling target, including for delegated
+runs. Approvals and replies are saved in PostgreSQL; the worker observes them on
+its next tick. This mode does not adopt runs created by the local execution mode.
+
+This remains a loopback development API with a fixed local identity. Hosted
+identity, token authentication and multi-tenant deployment are separate work.
+Hudson Sandbox is a separate product and is not required for this mode. A future
+adapter will connect its execution operations through Hudson's tool controls.

@@ -93,5 +93,6 @@ completed workflows are never executed again. For automatic recovery, use core `
 with the worker. Ordinary core submissions are never implicitly adopted. A
 scheduling acknowledgement records Temporal acceptance, not task completion. An application exposing
 this SDK over a network must authenticate its own callers and supply their trusted
-workspace/actor identity; the existing loopback HTTP development server still uses
-its local driver and does not schedule Temporal runs.
+workspace/actor identity. The loopback HTTP development server defaults to its
+local driver; use `--temporal-task-queue` with durable storage to save submissions
+for a separate worker ([API setup](api.md#separate-api-admission-from-temporal-execution)).
