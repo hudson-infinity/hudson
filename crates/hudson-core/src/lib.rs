@@ -39,3 +39,5 @@ pub mod subagents;
 pub mod configured;
 
 pub mod evaluation;
+
+pub mod memory;

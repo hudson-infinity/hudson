@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Data {
+    #[serde(default)]
+    pub memories: BTreeMap<Uuid, crate::memory::MemoryRecord>,
     #[serde(default, with = "super::pairs")]
     pub model_budgets: BTreeMap<(String, String), crate::budgets::ModelBudget>,
     #[serde(default, with = "super::pairs")]
