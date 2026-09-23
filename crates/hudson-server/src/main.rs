@@ -5,8 +5,7 @@ mod routes;
 use clap::Parser;
 use config::Args;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let authenticated = args.require_api_token;
     // Blocking HTTP clients and PostgreSQL are constructed outside Tokio's async context.
@@ -54,20 +53,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })
     .join()
     .map_err(|_| "server initialization failed")??;
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;
-    eprintln!(
-        "Hudson local API: http://{} ({})",
-        listener.local_addr()?,
-        if authenticated {
-            "bearer authentication required"
-        } else {
-            "single user, no authentication"
-        }
-    );
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+    // Retain the shared state until the async runtime has finished shutting down.
+    // The synchronous PostgreSQL clients must be dropped outside Tokio.
+    let retained_router = router.clone();
+    let result = {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async move {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;
+            eprintln!(
+                "Hudson local API: http://{} ({})",
+                listener.local_addr()?,
+                if authenticated {
+                    "bearer authentication required"
+                } else {
+                    "single user, no authentication"
+                }
+            );
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = tokio::signal::ctrl_c().await;
+                })
+                .await?;
+            Ok::<_, Box<dyn std::error::Error>>(())
         })
-        .await?;
-    Ok(())
+    };
+    drop(retained_router);
+    result
 }

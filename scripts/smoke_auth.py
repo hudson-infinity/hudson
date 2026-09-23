@@ -4,6 +4,7 @@ import os
 import pathlib
 import re
 import select
+import signal
 import subprocess
 import tempfile
 import time
@@ -97,7 +98,11 @@ try:
         assert result.returncode != 0 and 'requires HTTPS' in result.stderr
         assert first['token'] not in result.stdout + result.stderr
         assert request('POST', '/runs/' + run + '/cancel', rotated['token'], {})[0] == 200
-    print('PASS: scoped API credentials, denial before admission, rotation, expiry, persistent revocation and authenticated CLI')
+    process.send_signal(signal.SIGINT)
+    _, errors = process.communicate(timeout=10)
+    assert process.returncode == 0, errors
+    process = None
+    print('PASS: scoped API credentials, denial before admission, rotation, expiry, persistent revocation, authenticated CLI and graceful shutdown')
 finally:
     if process:
         process.kill()
