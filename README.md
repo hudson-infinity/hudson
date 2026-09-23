@@ -134,7 +134,9 @@ POST `/runs/{id}/cancel` to request cancellation, including during model/tool IO
 Unknown effects stay unresolved until an operator reconciles them.
 
 This server binds only to loopback and uses one local developer identity. It runs
-one configured agent tree per process, with sequential execution. It is a local
+one configured agent tree per process. The default local driver executes sequentially;
+`--temporal-task-queue QUEUE` with `--database` instead saves work for a separate
+Temporal worker ([setup](docs/api.md#separate-api-admission-from-temporal-execution)). It is a local
 integration API; authentication and hosted multi-tenant serving are not implemented.
 Without `--database`, its state is in memory. `--demo` selects the fixture preview.
 
@@ -205,8 +207,8 @@ require approval; delegation is preauthorized. Library callers can configure pol
 Uncertain effects are never automatically replayed. Operator-assisted interruption
 marking and tool receipt reconciliation exist. The Temporal host provides durable
 background scheduling and concurrent team workflows; uncertain external effects
-still require evidence-based reconciliation. Automatic submission outbox recovery,
-currency accounting, automatic skill-file discovery,
+still require evidence-based reconciliation. Temporal submissions persist scheduling intent
+atomically and matching workers recover unpublished runs. Currency accounting, automatic skill-file discovery,
 and hosted product integration remain unfinished. No sandbox isolation is implemented;
 application Rust tools are trusted code.
 

@@ -29,6 +29,48 @@ pub(crate) struct ScheduleRequest {
     pub last_attempt: u64,
 }
 impl Store {
+    /// Check that a run (or its root for delegated work) belongs to this scheduler.
+    /// This is also required before accepting controls from a scheduling-only host.
+    pub fn validate_schedule(
+        &self,
+        actor: &Actor,
+        id: Uuid,
+        target: Option<&ScheduleTarget>,
+    ) -> Result<()> {
+        self.read(|data| {
+            let mut current = id;
+            let mut visited = std::collections::BTreeSet::new();
+            loop {
+                if !visited.insert(current) {
+                    return Err(Error::Conflict("cyclic run ancestry".into()));
+                }
+                let run = data.run(actor, current)?;
+                match run.parent_operation {
+                    Some(operation) => {
+                        current = data
+                            .operations
+                            .get(&operation)
+                            .ok_or(Error::NotFound)?
+                            .run_id;
+                    }
+                    None => break,
+                }
+            }
+            if data
+                .schedule_requests
+                .get(&current)
+                .map(|request| &request.target)
+                == target
+            {
+                Ok(())
+            } else {
+                Err(Error::Conflict(
+                    "run belongs to a different execution host".into(),
+                ))
+            }
+        })
+    }
+
     /// Return only explicitly scheduled roots owned by this actor and agent.
     pub fn pending_schedules(
         &self,

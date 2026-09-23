@@ -22,6 +22,10 @@ fn scheduling_intent_is_atomic_scoped_and_idempotent() {
         )
     };
     let id = submit(Some(target.clone())).unwrap();
+    runtime
+        .store
+        .validate_schedule(&actor, id, Some(&target))
+        .unwrap();
     assert_eq!(submit(Some(target.clone())).unwrap(), id);
     assert!(submit(None).is_err());
     let other = ScheduleTarget {
@@ -29,6 +33,10 @@ fn scheduling_intent_is_atomic_scoped_and_idempotent() {
         ..target.clone()
     };
     assert!(submit(Some(other.clone())).is_err());
+    assert!(runtime
+        .store
+        .validate_schedule(&actor, id, Some(&other))
+        .is_err());
     assert_eq!(
         runtime
             .store
@@ -45,6 +53,10 @@ fn scheduling_intent_is_atomic_scoped_and_idempotent() {
         .pending_schedules(&stranger, &fixtures::agent_ref(), &target, 10)
         .unwrap()
         .is_empty());
+    assert!(runtime
+        .store
+        .validate_schedule(&stranger, id, Some(&target))
+        .is_err());
     assert!(runtime
         .store
         .acknowledge_schedule(&stranger, id, &target)
@@ -150,4 +162,67 @@ fn attempted_requests_cannot_starve_untouched_work() {
         "untouched request must lead the next batch"
     );
     assert_eq!(next.len(), 100, "failed attempts must remain eligible");
+}
+
+#[test]
+fn delegated_runs_inherit_the_root_execution_host() {
+    let mut runtime = fixtures::runtime().unwrap();
+    let actor = fixtures::actor();
+    let target = ScheduleTarget {
+        scheduler: "temporal:api".into(),
+        task_queue: "agents".into(),
+    };
+    let input = json!({"order_id":"123","action":"lookup"});
+    let root = runtime
+        .submit_scheduled(
+            &actor,
+            fixtures::agent_ref(),
+            input.clone(),
+            None,
+            None,
+            Some(target.clone()),
+        )
+        .unwrap();
+    let mut parent = root;
+    for _ in 0..2 {
+        runtime.tick(&actor, parent).unwrap();
+        let operation = runtime.store.operations(&actor, parent).unwrap()[0].meta.id;
+        let child = runtime
+            .submit(&actor, fixtures::agent_ref(), input.clone(), None)
+            .unwrap();
+        assert!(runtime.store.link_child(&actor, child, operation).unwrap());
+        runtime
+            .store
+            .validate_schedule(&actor, child, Some(&target))
+            .unwrap();
+        assert!(runtime
+            .store
+            .validate_schedule(&actor, child, None)
+            .is_err());
+        let other = ScheduleTarget {
+            task_queue: "other".into(),
+            ..target.clone()
+        };
+        assert!(runtime
+            .store
+            .validate_schedule(&actor, child, Some(&other))
+            .is_err());
+        parent = child;
+    }
+    runtime
+        .store
+        .acknowledge_schedule(&actor, root, &target)
+        .unwrap();
+    runtime
+        .store
+        .validate_schedule(&actor, parent, Some(&target))
+        .unwrap();
+    let stranger = Actor {
+        workspace_id: "other-workspace".into(),
+        ..actor.clone()
+    };
+    assert!(runtime
+        .store
+        .validate_schedule(&stranger, parent, Some(&target))
+        .is_err());
 }

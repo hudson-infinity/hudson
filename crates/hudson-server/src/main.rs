@@ -26,6 +26,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 workspace_id: "local".into(),
                 id: "developer".into(),
             };
+            if let Some(task_queue) = args.temporal_task_queue {
+                let tree = configuration.build_temporal_tree(store, &actor)?;
+                return Ok(routes::scheduled(
+                    tree,
+                    actor,
+                    hudson_core::scheduling::ScheduleTarget {
+                        scheduler: format!("temporal:{}", args.namespace),
+                        task_queue,
+                    },
+                )?);
+            }
             let tree = configuration.build_tree(store, &actor)?;
             Ok(routes::configured(tree, actor, durable))
         };

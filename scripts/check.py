@@ -37,6 +37,8 @@ def main():
     if args.database:
         test += ['--', '--include-ignored']
     run(*test)
+    if args.temporal:
+        run('cargo', 'build', '--locked', '-p', 'hudson-server')
     temporal_test = ['cargo', 'test', '--locked', '-p', 'hudson-temporal']
     if args.temporal:
         temporal_test += ['--', '--include-ignored']
