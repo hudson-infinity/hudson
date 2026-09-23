@@ -9,6 +9,9 @@ use hudson_core::{models::Actor, storage::Store, Error};
 use serde_json::json;
 
 #[derive(Clone)]
+pub(crate) struct Authenticated;
+
+#[derive(Clone)]
 struct Authentication {
     store: Store,
     actor: Actor,
@@ -36,7 +39,7 @@ fn rejected(status: StatusCode, message: &'static str) -> Response {
 
 async fn authenticate(
     State(auth): State<Authentication>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let mut headers = request.headers().get_all(header::AUTHORIZATION).iter();
@@ -54,6 +57,7 @@ async fn authenticate(
         tokio::task::spawn_blocking(move || auth.store.authenticate_api_token(&bearer)).await;
     match result {
         Ok(Ok(actor)) if actor.workspace_id == expected.workspace_id && actor.id == expected.id => {
+            request.extensions_mut().insert(Authenticated);
             next.run(request).await
         }
         Ok(Ok(_)) => rejected(
@@ -78,6 +82,35 @@ mod tests {
         Arc,
     };
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn live_openapi_requires_bearer_authentication_on_a_protected_instance() {
+        let store = Store::default();
+        let actor = Actor {
+            workspace_id: "project".into(),
+            id: "backend".into(),
+        };
+        let token = store
+            .issue_api_token(actor.clone(), "backend".into(), now() + 60_000)
+            .unwrap();
+        let router = protect(crate::routes::router().unwrap(), store, actor);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/openapi.json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", token.bearer()))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 256 * 1024)
+            .await
+            .unwrap();
+        let specification: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(specification["security"], json!([{"HudsonBearer":[]}]));
+    }
 
     #[tokio::test]
     async fn authentication_precedes_effects_and_checks_revocation_on_every_request() {

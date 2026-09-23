@@ -2,7 +2,9 @@
 
 The machine-readable contract is [openapi.json](openapi.json). Each server also
 serves it at `GET /openapi.json`. Credential-protected instances authenticate that
-request through PostgreSQL; serving the schema makes no model calls.
+request through PostgreSQL; serving the schema makes no model calls. The live
+schema declares bearer authentication as required on protected instances and
+no authentication on unprotected local instances.
 Import that document into an OpenAPI-capable client to inspect request and
 response schemas. The API is currently a preview with unversioned paths.
 
