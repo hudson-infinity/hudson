@@ -46,6 +46,36 @@ execution driver or the synchronous worker to execute these runs concurrently.
 Temporal team definitions have different tool identities; use a new namespace or
 increment the agent versions when migrating an existing synchronous tree.
 
+## Workers for published revisions
+
+A trusted host can publish a `Configuration` through
+`Store::publish_configuration`, restore it through `published_configuration`,
+and submit with its admission tree and the expected scheduling target. The
+published worker discovers saved scheduling requests for all published revisions
+owned by its configured workspace and actor:
+
+```sh
+cargo run -p hudson-temporal -- \
+  --published --database hudson --namespace customer-one \
+  --workspace-id customer-one --actor-id backend \
+  --task-queue customer-one worker
+```
+
+This mode requires no agent file. It reloads the root's immutable publication for
+each revision and uses that root's tree for delegated children, even when another
+publication uses the same child name. Worker-side credentials are resolved when
+the revision is first used. The cache holds at most 64 revisions; evicting a cached
+runtime does not remove definitions or run state. Different tree members keep
+their independent executor locks.
+
+Use a dedicated queue per configured workspace/actor and database namespace. Do
+not mix startup-configured and published workers on that queue. Queue mismatches,
+unpublished roots, and another publication owner's runs are rejected. The
+scheduler checks pinned goals and budgets before starting a saved request.
+`--published` currently supports only `worker`; customer HTTP publication and
+submission by published reference are still being implemented. Trusted Rust hosts
+can use `RunActivities::published` and `SchedulingPump::published` directly.
+
 ## Durability boundary
 
 Workflow code does no provider or tool IO. Activities call the existing runtime,
@@ -75,6 +105,8 @@ the Temporal CLI. Coverage includes cancellation, concurrent team members and
 joined results, foreground/background CLI processes, request-key deduplication,
 a question resumed from PostgreSQL after a worker restart, approval enforcement,
 and SIGKILL during a write followed by a Temporal retry and receipt reconciliation.
+Published-revision coverage includes concurrent children, user-input recovery after
+a worker restart, and a separate worker process with its source file removed.
 No hosted deployment or paid provider calls are part of these checks.
 
 ## Embedding execution in a Rust service

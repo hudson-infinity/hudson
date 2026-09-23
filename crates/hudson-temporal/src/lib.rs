@@ -22,17 +22,50 @@ pub struct TickResult {
     pub children: Vec<Uuid>,
 }
 
+enum ActivityRuntimes {
+    Configured(ScheduledTree),
+    Published(hudson_core::published_worker::PublishedWorker),
+}
+impl ActivityRuntimes {
+    fn store(&self) -> &hudson_core::storage::Store {
+        match self {
+            Self::Configured(tree) => &tree.store,
+            Self::Published(worker) => &worker.store,
+        }
+    }
+    fn tick(&self, actor: &Actor, id: Uuid) -> hudson_core::Result<RunView> {
+        match self {
+            Self::Configured(tree) => tree.tick(actor, id),
+            Self::Published(worker) => worker.tick(id),
+        }
+    }
+}
+
 pub struct RunActivities {
-    tree: Option<ScheduledTree>,
+    tree: Option<ActivityRuntimes>,
     actor: Actor,
 }
 
 impl RunActivities {
     pub fn new(tree: ScheduledTree, actor: Actor) -> Self {
         Self {
-            tree: Some(tree),
+            tree: Some(ActivityRuntimes::Configured(tree)),
             actor,
         }
+    }
+}
+impl RunActivities {
+    pub fn published(
+        store: hudson_core::storage::Store,
+        actor: Actor,
+        target: hudson_core::scheduling::ScheduleTarget,
+    ) -> hudson_core::Result<Self> {
+        let worker =
+            hudson_core::published_worker::PublishedWorker::new(store, actor.clone(), target)?;
+        Ok(Self {
+            tree: Some(ActivityRuntimes::Published(worker)),
+            actor,
+        })
     }
 }
 impl Drop for RunActivities {
@@ -61,8 +94,11 @@ impl RunActivities {
     ) -> Result<TickResult, ActivityError> {
         let mut task = tokio::task::spawn_blocking(move || {
             let tree = self.tree.as_ref().expect("live activity tree");
+            if let ActivityRuntimes::Published(worker) = tree {
+                worker.validate_run(id).map_err(|error| error.to_string())?;
+            }
             let pending = tree
-                .store
+                .store()
                 .operations(&self.actor, id)
                 .map_err(|e| e.to_string())?
                 .iter()
@@ -76,7 +112,7 @@ impl RunActivities {
                     )
                 });
             let children = tree
-                .store
+                .store()
                 .children(&self.actor, id)
                 .map_err(|e| e.to_string())?
                 .into_iter()
@@ -87,7 +123,7 @@ impl RunActivities {
             // the lead ask its model to continue while its team is still working.
             if !pending && !children.is_empty() {
                 let view = tree
-                    .store
+                    .store()
                     .inspect(&self.actor, id)
                     .map_err(|e| e.to_string())?;
                 return Ok(TickResult { view, children });

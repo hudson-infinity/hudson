@@ -79,6 +79,26 @@ impl Store {
         target: &ScheduleTarget,
         limit: usize,
     ) -> Result<Vec<Uuid>> {
+        self.pending_schedules_matching(actor, Some(agent), target, limit)
+    }
+
+    /// Scheduled roots whose immutable publication belongs to this owner.
+    pub fn pending_published_schedules(
+        &self,
+        actor: &Actor,
+        target: &ScheduleTarget,
+        limit: usize,
+    ) -> Result<Vec<Uuid>> {
+        self.pending_schedules_matching(actor, None, target, limit)
+    }
+
+    fn pending_schedules_matching(
+        &self,
+        actor: &Actor,
+        agent: Option<&VersionRef>,
+        target: &ScheduleTarget,
+        limit: usize,
+    ) -> Result<Vec<Uuid>> {
         target.validate()?;
         if !(1..=100).contains(&limit) {
             return Err(Error::Invalid(
@@ -94,10 +114,14 @@ impl Store {
                 let Ok(run) = data.run(actor, *id) else {
                     continue;
                 };
-                if run.agent_ref == *agent
-                    && run.parent_operation.is_none()
-                    && !run.status.terminal()
-                {
+                let matches = match agent {
+                    Some(agent) => run.agent_ref == *agent,
+                    None => data
+                        .publications
+                        .get(&(actor.workspace_id.clone(), run.agent_ref.clone()))
+                        .is_some_and(|record| record.actor_id == actor.id),
+                };
+                if matches && run.parent_operation.is_none() && !run.status.terminal() {
                     pending.push((request.last_attempt, run.meta.created_at, *id));
                 }
             }
