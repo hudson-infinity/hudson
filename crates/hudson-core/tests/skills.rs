@@ -23,6 +23,14 @@ fn skill_bodies_are_lazy_and_versions_remain_pinned() {
         .unwrap();
     assert_ne!(old.id, new.id);
     assert!(!old.description.contains("missing values"));
+    assert!(old.input_schema["properties"].get("resource").is_none());
+    let compatible =
+        SkillCatalog::with_packages(vec![skill("Check missing values first.")], vec![])
+            .unwrap()
+            .register(&mut ToolRegistry::new(), "a", "read")
+            .unwrap();
+    assert_eq!(old.id, compatible.id);
+    assert_eq!(old.input_schema, compatible.input_schema);
     for (tool, expected) in [
         (&old, "Check missing values first."),
         (&new, "Check column types first."),
@@ -66,4 +74,59 @@ fn markdown_load_is_bounded_and_catalog_freezes_content() {
     std::fs::write(&path, [0xff]).unwrap();
     assert!(Skill::from_markdown("analysis", "Analyze data", &path).is_err());
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn portable_packages_freeze_lazy_resources_and_reject_traversal() {
+    use hudson_core::skills::SkillPackage;
+    let root = std::env::temp_dir().join(format!("hudson-package-{}", uuid::Uuid::new_v4()));
+    let directory = root.join("analyze-data");
+    std::fs::create_dir_all(directory.join("references")).unwrap();
+    std::fs::write(directory.join("SKILL.md"),"---\nname: analyze-data\ndescription: Analyze company data\nlicense: MIT\nmetadata:\n  version: '1'\n---\nConsult references/metrics.md before calculating.\n").unwrap();
+    let path = directory.join("references/metrics.md");
+    std::fs::write(&path, "Revenue excludes refunds.").unwrap();
+    let package = SkillPackage::load(&directory).unwrap();
+    let mut registry = ToolRegistry::new();
+    let old = SkillCatalog::with_packages(vec![], vec![package])
+        .unwrap()
+        .register(&mut registry, "a", "read")
+        .unwrap();
+    std::fs::write(&path, "Revenue includes refunds.").unwrap();
+    let new = SkillCatalog::with_packages(vec![], vec![SkillPackage::load(&directory).unwrap()])
+        .unwrap()
+        .register(&mut registry, "a", "read")
+        .unwrap();
+    assert_ne!(old.id, new.id);
+    assert!(!old.description.contains("Revenue"));
+    let output = registry
+        .execute(Invocation {
+            operation_id: uuid::Uuid::new_v4(),
+            tool: &old,
+            arguments: &json!({"name":"analyze-data"}),
+        })
+        .unwrap();
+    assert_eq!(output["resources"], json!(["references/metrics.md"]));
+    let output = registry
+        .execute(Invocation {
+            operation_id: uuid::Uuid::new_v4(),
+            tool: &old,
+            arguments: &json!({"name":"analyze-data","resource":"references/metrics.md"}),
+        })
+        .unwrap();
+    assert_eq!(output["contents"], "Revenue excludes refunds.");
+    for path in ["../secret", "/etc/passwd", "references/../SKILL.md"] {
+        assert!(registry
+            .execute(Invocation {
+                operation_id: uuid::Uuid::new_v4(),
+                tool: &old,
+                arguments: &json!({"name":"analyze-data","resource":path})
+            })
+            .is_err());
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/etc/passwd", directory.join("references/outside.md")).unwrap();
+        assert!(SkillPackage::load(&directory).is_err());
+    }
+    std::fs::remove_dir_all(root).unwrap();
 }

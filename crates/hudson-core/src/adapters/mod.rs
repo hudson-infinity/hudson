@@ -8,3 +8,5 @@ pub mod chat;
 pub mod http_tools;
 
 pub mod anthropic;
+
+pub mod mcp;
