@@ -13,7 +13,7 @@ pub struct PublishedWorker {
     pub store: Store,
     actor: Actor,
     target: ScheduleTarget,
-    trees: Mutex<BTreeMap<VersionRef, Arc<ScheduledTree>>>,
+    trees: Mutex<BTreeMap<uuid::Uuid, Arc<ScheduledTree>>>,
 }
 impl PublishedWorker {
     pub fn new(store: Store, actor: Actor, target: ScheduleTarget) -> Result<Self> {
@@ -34,7 +34,8 @@ impl PublishedWorker {
         self.store.published_root(&self.actor, id)
     }
     pub fn tick(&self, id: uuid::Uuid) -> Result<RunView> {
-        let root = self.validate_run(id)?;
+        self.validate_run(id)?;
+        let (root, configuration) = self.store.published_run_configuration(&self.actor, id)?;
         let tree = {
             let mut trees = self
                 .trees
@@ -44,13 +45,12 @@ impl PublishedWorker {
                 tree.clone()
             } else {
                 let tree = Arc::new(
-                    self.store
-                        .published_configuration(&self.actor, &root)?
+                    configuration
                         .build_temporal_tree(self.store.clone(), &self.actor)
                         .map_err(|error| Error::Invalid(error.to_string()))?
                         .into_scheduled(),
                 );
-                // Bound cached revisions. In-flight trees retain their own Arc while
+                // Bound cached root submissions. In-flight trees retain their own Arc while
                 // evicted; the runtime's durable operation claim still owns effects.
                 if trees.len() >= 64 {
                     if let Some(evicted) = trees.keys().next().cloned() {

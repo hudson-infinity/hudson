@@ -37,6 +37,10 @@ impl ModelExecutor for NoModel {
 }
 type Control = Runtime<AgentLoop, NoModel, ToolRegistry>;
 enum Driver {
+    Published(
+        Arc<hudson_core::customer::HostCatalog>,
+        hudson_core::scheduling::ScheduleTarget,
+    ),
     Demo(DemoRuntime),
     Configured(
         Box<ConfiguredTree>,
@@ -48,7 +52,7 @@ impl Driver {
         match self {
             Self::Demo(runtime) => runtime.tick(actor, id),
             Self::Configured(runtime, None) => runtime.tick(actor, id),
-            Self::Configured(_, Some(_)) => Err(Error::Unsupported(
+            Self::Configured(_, Some(_)) | Self::Published(_, _) => Err(Error::Unsupported(
                 "scheduled host cannot execute locally".into(),
             )),
         }
@@ -61,7 +65,8 @@ struct App {
     store: Store,
     active: Arc<Mutex<BTreeMap<Uuid, bool>>>,
     actor: Actor,
-    agent: VersionRef,
+    agent: Option<VersionRef>,
+    catalog: Option<Arc<hudson_core::customer::HostCatalog>>,
     goal: Option<Goal>,
     bindings: BTreeMap<VersionRef, Option<Goal>>,
     model_budget: Option<hudson_core::budgets::ModelBudgetBinding>,
@@ -97,6 +102,24 @@ impl App {
         self.store
             .validate_schedule(&self.actor, id, self.schedule.as_ref())?;
         let run = self.store.inspect(&self.actor, id)?;
+        if self.catalog.is_some() {
+            let (_, configuration) = self.store.published_run_configuration(&self.actor, id)?;
+            let tree = configuration
+                .build_admission_tree(self.store.clone(), &self.actor)
+                .map_err(|error| ApiError(Error::Invalid(error.to_string())))?;
+            let bindings = tree.bindings();
+            let goal = bindings
+                .get(&run.agent_ref)
+                .ok_or(ApiError(Error::NotFound))?;
+            self.store
+                .validate_resume(&self.actor, id, &run.agent_ref, goal)?;
+            self.store.validate_model_budget(
+                &self.actor,
+                id,
+                &tree.runtime.model_budget_binding(),
+            )?;
+            return Ok(());
+        }
         let goal = self.bindings.get(&run.agent_ref).ok_or_else(|| {
             ApiError(Error::Conflict(
                 "agent version is not configured in this host".into(),
@@ -172,6 +195,7 @@ async fn blocking<T: Send + 'static>(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Submission {
+    agent_ref: Option<hudson_core::customer::Reference>,
     input: Value,
     request_key: Option<String>,
 }
@@ -180,24 +204,46 @@ async fn submit(
     Json(body): Json<Submission>,
 ) -> Result<impl IntoResponse, ApiError> {
     blocking(move || {
-        let id = if app.fixture {
-            // Submission pins the backend checkpoint format, even before its first tick.
-            Runtime::new(
-                app.store.clone(),
-                fixtures::FixtureBackend,
-                NoModel(None),
-                ToolRegistry::new(),
-            )
-            .submit(&app.actor, app.agent.clone(), body.input, body.request_key)?
-        } else {
-            app.lock()?.submit_scheduled(
+        let id = if app.catalog.is_some() {
+            let reference = body
+                .agent_ref
+                .ok_or_else(|| ApiError(Error::Invalid("agent_ref is required".into())))?;
+            let key = body
+                .request_key
+                .ok_or_else(|| ApiError(Error::Invalid("request_key is required".into())))?;
+            app.store.submit_published(
                 &app.actor,
-                app.agent.clone(),
+                &reference.version_ref(),
                 body.input,
-                body.request_key,
-                app.goal.clone(),
-                app.schedule.clone(),
+                &key,
+                app.schedule.clone().ok_or_else(unavailable)?,
             )?
+        } else {
+            if body.agent_ref.is_some() {
+                return Err(ApiError(Error::Invalid(
+                    "agent_ref requires published mode".into(),
+                )));
+            }
+            let agent = app.agent.clone().ok_or_else(unavailable)?;
+            if app.fixture {
+                // Submission pins the backend checkpoint format, even before its first tick.
+                Runtime::new(
+                    app.store.clone(),
+                    fixtures::FixtureBackend,
+                    NoModel(None),
+                    ToolRegistry::new(),
+                )
+                .submit(&app.actor, agent, body.input, body.request_key)?
+            } else {
+                app.lock()?.submit_scheduled(
+                    &app.actor,
+                    agent,
+                    body.input,
+                    body.request_key,
+                    app.goal.clone(),
+                    app.schedule.clone(),
+                )?
+            }
         };
         app.drive(id)?;
         Ok((StatusCode::ACCEPTED, Json(json!({"run_id":id}))))
@@ -321,24 +367,33 @@ fn assemble(
     driver: Driver,
     store: Store,
     actor: Actor,
-    agent: VersionRef,
+    agent: Option<VersionRef>,
     goal: Option<Goal>,
     durable: bool,
     mode: &'static str,
 ) -> Router {
     let bindings = match &driver {
         Driver::Configured(tree, _) => tree.bindings(),
-        Driver::Demo(_) => [(agent.clone(), goal.clone())].into(),
+        Driver::Demo(_) => [(agent.clone().expect("fixture agent"), goal.clone())].into(),
+        Driver::Published(_, _) => Default::default(),
     };
     let model_budget = match &driver {
         Driver::Configured(tree, _) => tree.runtime.model_budget_binding(),
         Driver::Demo(runtime) => runtime.model_budget_binding(),
+        Driver::Published(_, _) => None,
     };
     let schedule = match &driver {
         Driver::Configured(_, target) => target.clone(),
         Driver::Demo(_) => None,
+        Driver::Published(_, target) => Some(target.clone()),
     };
+    let catalog = match &driver {
+        Driver::Published(catalog, _) => Some(catalog.clone()),
+        _ => None,
+    };
+    let publishing = catalog.is_some();
     let app = App {
+        catalog,
         schedule,
         model_budget: model_budget.clone(),
         bindings,
@@ -356,11 +411,11 @@ fn assemble(
         goal,
         fixture: mode == "fixture",
     };
-    Router::new()
+    let router = Router::new()
         .route(
             "/openapi.json",
             get(
-                |authenticated: Option<Extension<crate::auth::Authenticated>>| async move {
+                move |authenticated: Option<Extension<crate::auth::Authenticated>>| async move {
                     let mut specification: Value =
                         serde_json::from_str(include_str!("../../../docs/openapi.json"))
                             .expect("checked OpenAPI document");
@@ -369,6 +424,21 @@ fn assemble(
                     } else {
                         json!([])
                     };
+                    if mode == "published" {
+                        specification["paths"]["/runs"]["post"]["requestBody"]["content"]
+                            ["application/json"]["schema"] =
+                            json!({"$ref":"#/components/schemas/PublishedSubmission"});
+                    } else if let Some(paths) = specification["paths"].as_object_mut() {
+                        for path in [
+                            "/capabilities",
+                            "/tools",
+                            "/tools/{name}/versions/{version}",
+                            "/agents",
+                            "/agents/{name}/versions/{version}",
+                        ] {
+                            paths.remove(path);
+                        }
+                    }
                     Json(specification)
                 },
             ),
@@ -385,7 +455,18 @@ fn assemble(
         .route("/runs/{id}/input", post(reply))
         .route("/runs/{id}/cancel", post(cancel))
         .route("/operations/{id}", get(inspect_operation))
-        .route("/operations/{id}/approval", post(approve))
+        .route("/operations/{id}/approval", post(approve));
+    let router = if publishing {
+        router
+            .route("/capabilities", get(capabilities))
+            .route("/tools", post(publish_tool))
+            .route("/tools/{name}/versions/{version}", get(get_tool))
+            .route("/agents", post(publish_agent))
+            .route("/agents/{name}/versions/{version}", get(get_agent))
+    } else {
+        router
+    };
+    router
         .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
         .with_state(app)
 }
@@ -396,7 +477,7 @@ pub fn router() -> Result<Router, Error> {
         Driver::Demo(runtime),
         store,
         fixtures::actor(),
-        fixtures::agent_ref(),
+        Some(fixtures::agent_ref()),
         None,
         false,
         "fixture",
@@ -410,7 +491,7 @@ pub fn configured(tree: ConfiguredTree, actor: Actor, durable: bool) -> Router {
         Driver::Configured(Box::new(tree), None),
         store,
         actor,
-        agent,
+        Some(agent),
         goal,
         durable,
         "configured",
@@ -430,11 +511,105 @@ pub fn scheduled(
         Driver::Configured(Box::new(tree), Some(target)),
         store,
         actor,
-        agent,
+        Some(agent),
         goal,
         true,
         "temporal",
     ))
+}
+
+pub fn published(
+    store: Store,
+    actor: Actor,
+    target: hudson_core::scheduling::ScheduleTarget,
+    catalog: hudson_core::customer::HostCatalog,
+) -> Result<Router, Error> {
+    target.validate()?;
+    catalog.install(&store, &actor)?;
+    Ok(assemble(
+        Driver::Published(Arc::new(catalog), target),
+        store,
+        actor,
+        None,
+        None,
+        true,
+        "published",
+    ))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToolPublication {
+    request_key: String,
+    tool: hudson_core::customer::ToolDefinition,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentPublication {
+    request_key: String,
+    agent: hudson_core::customer::AgentDefinition,
+}
+async fn capabilities(State(app): State<App>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        app.catalog
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .capabilities(&app.actor)?,
+    ))
+}
+async fn publish_tool(
+    State(app): State<App>,
+    Json(body): Json<ToolPublication>,
+) -> Result<impl IntoResponse, ApiError> {
+    blocking(move || {
+        let receipt = app.store.publish_customer_tool(
+            &app.actor,
+            app.catalog.as_ref().ok_or_else(unavailable)?,
+            body.tool,
+            &body.request_key,
+        )?;
+        Ok((StatusCode::CREATED, Json(receipt)))
+    })
+    .await
+}
+async fn publish_agent(
+    State(app): State<App>,
+    Json(body): Json<AgentPublication>,
+) -> Result<impl IntoResponse, ApiError> {
+    blocking(move || {
+        let receipt = app.store.publish_customer_agent(
+            &app.actor,
+            app.catalog.as_ref().ok_or_else(unavailable)?,
+            body.agent,
+            &body.request_key,
+        )?;
+        Ok((StatusCode::CREATED, Json(receipt)))
+    })
+    .await
+}
+async fn get_tool(
+    State(app): State<App>,
+    Path((name, version)): Path<(String, u32)>,
+) -> Result<Json<hudson_core::customer::ToolDefinition>, ApiError> {
+    blocking(move || {
+        Ok(Json(app.store.customer_tool(
+            &app.actor,
+            &hudson_core::customer::Reference { id: name, version },
+        )?))
+    })
+    .await
+}
+async fn get_agent(
+    State(app): State<App>,
+    Path((name, version)): Path<(String, u32)>,
+) -> Result<Json<hudson_core::customer::AgentDefinition>, ApiError> {
+    blocking(move || {
+        Ok(Json(app.store.customer_agent(
+            &app.actor,
+            &hudson_core::customer::Reference { id: name, version },
+        )?))
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -469,6 +644,10 @@ mod tests {
         if segments.len() >= 3 && matches!(segments[1], "runs" | "operations") {
             segments[2] = "{id}";
         }
+        if segments.len() == 5 && matches!(segments[1], "agents" | "tools") {
+            segments[2] = "{name}";
+            segments[4] = "{version}";
+        }
         let responses =
             &specification["paths"][segments.join("/")][method.to_lowercase()]["responses"];
         let response = responses
@@ -498,6 +677,45 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
         panic!("run did not reach {status}");
+    }
+
+    #[tokio::test]
+    async fn publication_routes_match_the_live_contract_without_execution() {
+        let app = tokio::task::spawn_blocking(|| {
+            let actor = fixtures::actor();
+            let catalog = serde_json::from_value(json!({"owner":actor,
+                "models":[{"reference":{"id":"standard","version":1},"provider":"openai","model":"fixture","endpoint":"http://127.0.0.1:9/model","api_key_env":"HUDSON_MISSING_PUBLICATION_KEY"}],
+                "connections":[{"reference":{"id":"crm","version":1},"transport":{"type":"http","endpoint":"http://127.0.0.1:9/tool","token_env":"HUDSON_MISSING_PUBLICATION_KEY"}}]})).unwrap();
+            published(Store::default(),actor,hudson_core::scheduling::ScheduleTarget { scheduler:"temporal:test".into(),task_queue:"queue".into() },catalog).unwrap()
+        }).await.unwrap();
+        let (_, spec) = request(&app, "GET", "/openapi.json", Value::Null).await;
+        assert_eq!(
+            spec["paths"]["/runs"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+                ["$ref"],
+            "#/components/schemas/PublishedSubmission"
+        );
+        request(&app, "GET", "/capabilities", Value::Null).await;
+        request(&app,"POST","/tools",json!({"request_key":"tool","tool":{"name":"lookup","version":1,"description":"lookup","connection":{"id":"crm","version":1},"input_schema":{"type":"object"}}})).await;
+        request(&app, "GET", "/tools/lookup/versions/1", Value::Null).await;
+        let (status, receipt) = request(&app,"POST","/agents",json!({"request_key":"agent","agent":{"name":"assistant","version":1,"instructions":"help","model_profile":{"id":"standard","version":1},"tools":[{"id":"lookup","version":1}]}})).await;
+        assert_eq!(status, StatusCode::CREATED);
+        request(&app, "GET", "/agents/assistant/versions/1", Value::Null).await;
+        let (status, run) = request(
+            &app,
+            "POST",
+            "/runs",
+            json!({"agent_ref":receipt["agent_ref"],"request_key":"task","input":"help"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::ACCEPTED);
+        let (_, view) = request(
+            &app,
+            "GET",
+            &format!("/runs/{}", run["run_id"].as_str().unwrap()),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(view["status"], "queued");
     }
 
     #[tokio::test]

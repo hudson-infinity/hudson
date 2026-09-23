@@ -14,6 +14,23 @@ pub struct Args {
 #[derive(Subcommand)]
 pub enum Command {
     Health,
+    Capabilities,
+    /// Publish a JSON request containing request_key and tool.
+    PublishTool {
+        file: std::path::PathBuf,
+    },
+    /// Publish a JSON request containing request_key and agent.
+    PublishAgent {
+        file: std::path::PathBuf,
+    },
+    Tool {
+        name: String,
+        version: u32,
+    },
+    Agent {
+        name: String,
+        version: u32,
+    },
     Start(Start),
     /// Answer a waiting agent; reuse the key when retrying the same reply.
     Reply {
@@ -55,6 +72,11 @@ pub enum Command {
 #[derive(clap::Args)]
 #[command(group(clap::ArgGroup::new("input").required(true).args(["task", "input_file", "order"])))]
 pub struct Start {
+    /// Select an immutable published agent; omit for startup-configured hosts.
+    #[arg(long, requires_all = ["agent_version", "request_key"], conflicts_with = "order")]
+    pub agent: Option<String>,
+    #[arg(long, requires = "agent")]
+    pub agent_version: Option<u32>,
     /// Submit a plain-text task to the configured agent.
     #[arg(long)]
     pub task: Option<String>,

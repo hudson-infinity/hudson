@@ -118,8 +118,11 @@ impl Store {
     }
 
     /// Find the publication pinned by a run's root, including delegated descendants.
-    /// Every ancestry edge is checked against the same authenticated owner.
     pub fn published_root(&self, actor: &Actor, id: uuid::Uuid) -> Result<VersionRef> {
+        Ok(self.publication_root_run(actor, id)?.agent_ref)
+    }
+
+    fn publication_root_run(&self, actor: &Actor, id: uuid::Uuid) -> Result<crate::models::Run> {
         self.read(|data| {
             let mut current = id;
             let mut visited = std::collections::BTreeSet::new();
@@ -135,14 +138,61 @@ impl Store {
                         .ok_or(Error::NotFound)?
                         .run_id;
                 } else {
-                    let record = data
-                        .publications
+                    data.publications
                         .get(&(actor.workspace_id.clone(), run.agent_ref.clone()))
                         .filter(|record| record.actor_id == actor.id)
                         .ok_or(Error::NotFound)?;
-                    return Ok(record.receipt.agent_ref.clone());
+                    return Ok(run.clone());
                 }
             }
+        })
+    }
+
+    /// Reconstruct the root submission's budget as well as its immutable revision.
+    pub fn published_run_configuration(
+        &self,
+        actor: &Actor,
+        id: uuid::Uuid,
+    ) -> Result<(uuid::Uuid, Configuration)> {
+        let root = self.publication_root_run(actor, id)?;
+        let config = self
+            .published_configuration(actor, &root.agent_ref)?
+            .for_submission(actor, root.request_key.as_deref().unwrap_or(""))?;
+        Ok((root.meta.id, config))
+    }
+
+    /// Atomically admit a published run and its per-submission budget. No remote IO.
+    pub fn submit_published(
+        &self,
+        actor: &Actor,
+        reference: &VersionRef,
+        input: serde_json::Value,
+        request_key: &str,
+        target: crate::scheduling::ScheduleTarget,
+    ) -> Result<uuid::Uuid> {
+        if request_key.is_empty() || request_key.len() > 256 {
+            return Err(Error::Invalid(
+                "published submissions require a request key of 1 to 256 bytes".into(),
+            ));
+        }
+        let config = self
+            .published_configuration(actor, reference)?
+            .for_submission(actor, request_key)?;
+        self.transact(|data| {
+            let staging = Store::staging(data.clone());
+            let tree = config
+                .build_admission_tree(staging.clone(), actor)
+                .map_err(invalid)?;
+            let id = tree.runtime.submit_scheduled(
+                actor,
+                tree.reference.clone(),
+                input,
+                Some(request_key.to_owned()),
+                tree.goal.clone(),
+                Some(target),
+            )?;
+            *data = staging.read(|snapshot| Ok(snapshot.clone()))?;
+            Ok(id)
         })
     }
 

@@ -6,6 +6,11 @@ use uuid::Uuid;
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Data {
     #[serde(default, with = "super::pairs")]
+    pub customer_registry:
+        BTreeMap<(String, String, String, VersionRef), crate::customer::RegistryEntry>,
+    #[serde(default, with = "super::pairs")]
+    pub customer_tool_keys: BTreeMap<(String, String, String), crate::customer::DefinitionReceipt>,
+    #[serde(default, with = "super::pairs")]
     pub publications: BTreeMap<(String, VersionRef), crate::publication::PublishedConfiguration>,
     #[serde(default, with = "super::pairs")]
     pub publication_keys:

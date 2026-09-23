@@ -1,0 +1,15 @@
+{
+  "request_key": "lookup-v1",
+  "tool": {
+    "name": "lookup_customer",
+    "version": 1,
+    "description": "Read a customer record by its ID.",
+    "connection": {"id": "customer-lookup", "version": 1},
+    "input_schema": {
+      "type": "object",
+      "properties": {"customer_id": {"type": "string"}},
+      "required": ["customer_id"],
+      "additionalProperties": false
+    }
+  }
+}
