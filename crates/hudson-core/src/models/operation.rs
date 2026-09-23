@@ -22,9 +22,18 @@ pub enum OperationRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OperationResult {
-    Model { response: ModelResponse },
-    Tool { result: ToolResult },
-    Verify { passed: bool, feedback: String },
+    Model {
+        response: ModelResponse,
+    },
+    Tool {
+        result: ToolResult,
+    },
+    Verify {
+        passed: bool,
+        feedback: String,
+        #[serde(default)]
+        evidence: Vec<super::Evidence>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]

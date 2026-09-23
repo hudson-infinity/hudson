@@ -24,6 +24,7 @@ pub struct Case {
 
 #[derive(Debug, Serialize)]
 pub struct CaseResult {
+    pub elapsed_ms: u64,
     pub name: String,
     pub passed: bool,
     pub feedback: String,
@@ -70,6 +71,7 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
     validate_cases(cases)?;
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
+        let started = std::time::Instant::now();
         let id = runtime.submit_with_goal(
             actor,
             agent.clone(),
@@ -129,6 +131,7 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
             }
         };
         results.push(CaseResult {
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             name: case.name.clone(),
             passed: assessment.is_ok(),
             feedback: assessment

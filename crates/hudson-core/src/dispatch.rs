@@ -181,9 +181,41 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                             "goal output did not satisfy its success schema"
                         }
                         .into();
+                        if assessment.passed {
+                            if let Some(index) = goal
+                                .criteria
+                                .iter()
+                                .position(|rule| !rule.matches(candidate))
+                            {
+                                assessment.passed = false;
+                                assessment.feedback =
+                                    format!("success criterion {} failed", index + 1);
+                            }
+                        }
+                    }
+                }
+                let mut evidence = Vec::new();
+                for operation in self.store.operations(actor, run_id)? {
+                    if operation.status != OperationStatus::Succeeded {
+                        continue;
+                    }
+                    if let (
+                        OperationRequest::Tool { call, .. },
+                        Some(OperationResult::Tool { result }),
+                    ) = (&operation.request, &operation.result)
+                    {
+                        if matches!(result.outcome, ToolOutcome::Success { .. }) {
+                            evidence.push(Evidence {
+                                operation_id: operation.meta.id,
+                                tool_name: call.name.clone(),
+                                request_digest: operation.request_digest.clone(),
+                                result_digest: definitions::digest(result)?,
+                            });
+                        }
                     }
                 }
                 Ok(OperationResult::Verify {
+                    evidence,
                     passed: assessment.passed,
                     feedback: assessment.feedback,
                 })

@@ -32,8 +32,12 @@ fn goal_contract_is_persisted_and_enforced() {
         let reference = agent.reference();
         store.publish_agent(agent).unwrap();
         let goal = Goal {
+            criteria: vec![hudson_core::verification::Criterion::Equals {
+                pointer: "/answer".into(),
+                expected: json!(expected),
+            }],
             objective: "Return the answer".into(),
-            success_schema: json!({"type":"object","properties":{"answer":{"const":expected}},"required":["answer"]}),
+            success_schema: json!({"type":"object","properties":{"answer":{"type":"integer"}},"required":["answer"]}),
         };
         let mut runtime = Runtime::new(store, AgentLoop, Answer, ToolRegistry::new());
         let id = runtime

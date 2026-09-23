@@ -57,3 +57,48 @@ fn partial_limits_keep_other_defaults_and_reject_misspellings() {
         serde_json::from_value::<hudson_core::models::Limits>(json!({"max_model_call":1})).is_err()
     );
 }
+
+#[test]
+fn held_out_value_criteria_reject_schema_valid_wrong_answers() {
+    use hudson_core::{
+        adapters::models::ModelExecutor, adapters::tools::ExecutionError, verification::Criterion,
+    };
+    use hudson_harness::{ModelRequest, ModelResponse};
+    struct Fixed;
+    impl ModelExecutor for Fixed {
+        fn call(&mut self, request: &ModelRequest) -> Result<ModelResponse, ExecutionError> {
+            assert!(!serde_json::to_string(request)
+                .unwrap()
+                .contains("private-expected-answer"));
+            Ok(ModelResponse::Final {
+                output: json!({"answer":"actual"}),
+            })
+        }
+    }
+    let store = hudson_core::storage::Store::default();
+    let (mut agent, _) = fixtures::definitions();
+    agent.tools.clear();
+    agent.input_schema = None;
+    agent.output_schema = None;
+    let reference = agent.reference();
+    store.publish_agent(agent).unwrap();
+    let mut runtime = Runtime::new(store, AgentLoop, Fixed, ToolRegistry::new());
+    let cases = ["actual", "private-expected-answer"]
+        .into_iter()
+        .enumerate()
+        .map(|(i, expected)| Case {
+            name: format!("case-{i}"),
+            input: json!("answer the task"),
+            expected_schema: json!({"type":"object","required":["answer"]}),
+            criteria: vec![Criterion::Equals {
+                pointer: "/answer".into(),
+                expected: json!(expected),
+            }],
+        })
+        .collect::<Vec<_>>();
+    let report = evaluate(&mut runtime, &fixtures::actor(), reference, None, &cases).unwrap();
+    assert!(report.cases[0].passed);
+    assert!(!report.cases[1].passed);
+    assert_eq!(report.cases[1].run.status, RunStatus::Completed);
+    assert_eq!(report.cases[1].feedback, "held-out criterion 1 failed");
+}

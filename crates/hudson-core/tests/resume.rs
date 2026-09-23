@@ -49,6 +49,7 @@ fn resume_requires_pinned_agent_goal_and_model_transport() {
             id,
             &agent,
             &Some(Goal {
+                criteria: vec![],
                 objective: "different".into(),
                 success_schema: json!(true)
             })

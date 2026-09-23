@@ -494,6 +494,9 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
             return Err("invalid goal objective".into());
         }
         crate::definitions::validate_schema(&goal.success_schema)?;
+        for criterion in &goal.criteria {
+            criterion.validate()?;
+        }
     }
     if let Some(budget) = &definition.shared_model_budget {
         if budget.group.trim().is_empty() || budget.group.len() > 256 || budget.limit == 0 {

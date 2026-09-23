@@ -60,6 +60,7 @@ impl Criterion {
 pub fn check(schema: Option<&Value>, candidate: &Value) -> Assessment {
     let passed = schema.is_none_or(|s| definitions::validate(s, candidate).is_ok());
     Assessment {
+        evidence: vec![],
         passed,
         feedback: if passed {
             "output contract passed"

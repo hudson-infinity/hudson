@@ -56,6 +56,9 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                 ));
             }
             definitions::validate_schema(&goal.success_schema)?;
+            for criterion in &goal.criteria {
+                criterion.validate()?;
+            }
         }
         if actor.id.trim().is_empty() || actor.workspace_id.trim().is_empty() {
             return Err(Error::Denied);
@@ -187,6 +190,12 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     "\nTask objective: {}\nFinal output must satisfy this JSON Schema: {}",
                     goal.objective, goal.success_schema
                 ));
+                if !goal.criteria.is_empty() {
+                    config.instructions.push_str(&format!(
+                        "\nAdditional success criteria: {}",
+                        serde_json::to_string(&goal.criteria)?
+                    ));
+                }
             }
             Ok(config)
         })?;
@@ -362,10 +371,15 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     Some(Input::Tools { results })
                 }
                 OperationRequest::Verify { candidate } => match &operations[0].result {
-                    Some(OperationResult::Verify { passed, feedback }) => {
+                    Some(OperationResult::Verify {
+                        passed,
+                        feedback,
+                        evidence,
+                    }) => {
                         run.assessment = Some(Assessment {
                             passed: *passed,
                             feedback: feedback.clone(),
+                            evidence: evidence.clone(),
                         });
                         if *passed {
                             run.verified_candidate_digest = Some(definitions::digest(candidate)?);
