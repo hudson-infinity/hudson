@@ -48,7 +48,7 @@ Run baseline and candidate jobs on the same task set with identical budgets and 
 .venv-harbor/bin/python -m hudson_harbor.report jobs/baseline jobs/candidate
 ```
 
-The report uses Harbor verifier rewards for correctness and Hudson's reported usage and elapsed time. Missing rewards remain explicit. Dollar cost remains unknown; the adapter does not invent pricing. Context, run output, and worker stderr are saved under Harbor's agent logs. Be mindful that these benchmark logs contain task data and model output.
+The report uses Harbor verifier rewards for correctness and Hudson's reported usage and elapsed time. Missing rewards remain explicit. Dollar cost remains unknown unless explicit pricing is supplied as described below; the adapter does not invent pricing. Context, run output, and worker stderr are saved under Harbor's agent logs. Be mindful that these benchmark logs contain task data and model output.
 
 ## Local validation without paid calls
 

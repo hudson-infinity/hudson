@@ -21,10 +21,15 @@ must run through normal runtime authorization and durable execution.
 
 ## Current integration notes
 
-The integration branch contains context archival/retrieval, scoped memory runtime
-hooks, value criteria and operation evidence. MCP and portable package modules
-are integrated; customer configuration wiring is in progress. Adaptive team and
-Harbor work are in progress. The complete end-to-end acceptance run is pending.
+The integration branch contains configured context archival/retrieval, scoped
+memory runtime hooks, MCP and portable skill packages, durable team dependencies,
+value and verifier-tool criteria, operation evidence, a Rust execution client,
+and a Harbor adapter with coding/data/research tasks. Customer real-estate and
+data examples provide domain tools without implementing orchestration.
+
+Review fixes are in progress for actor validation on memory tools, large skill
+resource pagination, Harbor package paths, and large prerequisite outputs. The
+combined Temporal capability test and final aggregate acceptance run are pending.
 
 Tests with fixture models prove lifecycle behavior, not model quality. Paid model
 benchmarking and production hosting must not be inferred from local test results.
