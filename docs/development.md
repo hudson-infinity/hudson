@@ -6,6 +6,10 @@ PostgreSQL persistence. The [code structure](code-structure.md) describes owners
 the [implementation audit](implementation-status.md) distinguishes evidence from
 remaining work.
 
+Temporal SDK builds require the Protocol Buffers compiler (`protoc`) on PATH.
+On Ubuntu install `protobuf-compiler`; on macOS install `protobuf` with Homebrew.
+The hosted workflow installs it explicitly.
+
 ## Run or install locally
 
 From the repository root:
@@ -397,3 +401,13 @@ same database/namespace as the original run. Library applications use
 When enabled, `ask_user` is reserved and cannot be a customer tool alias. It is
 disabled by default for unattended agents. Mixed question/tool batches and invalid
 question arguments fail before any tools from that batch execute.
+
+## Hosted checks
+
+The `Harness checks` GitHub Actions workflow runs the aggregate check script on
+pull requests and pushes to `main`. It installs the repository-pinned Rust toolchain
+and starts an isolated PostgreSQL cluster on `/tmp`, then includes real local
+Temporal tests and all smoke scripts. Provider calls use local fixtures; provider
+credentials are not needed. Check and database logs are retained for seven days.
+The separate Harbor Docker benchmark plumbing remains an explicit check described
+in its integration README.
