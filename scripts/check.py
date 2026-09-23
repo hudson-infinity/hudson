@@ -38,7 +38,7 @@ def main():
         test += ['--', '--include-ignored']
     run(*test)
     if args.temporal:
-        run('cargo', 'build', '--locked', '-p', 'hudson-server')
+        run('cargo', 'build', '--locked', '-p', 'hudson-server', '-p', 'hudson-cli')
     temporal_test = ['cargo', 'test', '--locked', '-p', 'hudson-temporal']
     if args.temporal:
         temporal_test += ['--', '--include-ignored']

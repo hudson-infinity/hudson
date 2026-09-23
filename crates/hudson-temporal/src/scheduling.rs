@@ -83,9 +83,8 @@ impl SchedulingPump {
             let binding = match binding {
                 Some(binding) => binding,
                 None => {
-                    let reference = store.published_root(&actor, id)?;
-                    let tree = store
-                        .published_configuration(&actor, &reference)?
+                    let (_, configuration) = store.published_run_configuration(&actor, id)?;
+                    let tree = configuration
                         .build_admission_tree(store.clone(), &actor)
                         .map_err(|error| hudson_core::Error::Invalid(error.to_string()))?;
                     ConfiguredBinding {

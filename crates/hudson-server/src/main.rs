@@ -14,8 +14,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return routes::router().map_err(|error| error.to_string());
         }
         let build = || -> Result<axum::Router, Box<dyn std::error::Error>> {
-            let configuration =
-                hudson_core::configured::Configuration::load(args.config.as_deref().unwrap())?;
             let durable = args.database.is_some();
             let store = match args.database {
                 Some(database) => {
@@ -29,19 +27,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             let auth_store = store.clone();
             let auth_actor = actor.clone();
-            let router = if let Some(task_queue) = args.temporal_task_queue {
-                let tree = configuration.build_admission_tree(store, &actor)?;
-                routes::scheduled(
-                    tree,
+            let router = if let Some(path) = args.catalog {
+                let catalog = hudson_core::customer::HostCatalog::load(&path)?;
+                routes::published(
+                    store,
                     actor,
                     hudson_core::scheduling::ScheduleTarget {
                         scheduler: format!("temporal:{}", args.namespace),
-                        task_queue,
+                        task_queue: args
+                            .temporal_task_queue
+                            .ok_or("customer publication requires Temporal")?,
                     },
+                    catalog,
                 )?
             } else {
-                let tree = configuration.build_tree(store, &actor)?;
-                routes::configured(tree, actor, durable)
+                let configuration = hudson_core::configured::Configuration::load(
+                    args.config.as_deref().ok_or("configuration required")?,
+                )?;
+                if let Some(task_queue) = args.temporal_task_queue {
+                    let tree = configuration.build_admission_tree(store, &actor)?;
+                    routes::scheduled(
+                        tree,
+                        actor,
+                        hudson_core::scheduling::ScheduleTarget {
+                            scheduler: format!("temporal:{}", args.namespace),
+                            task_queue,
+                        },
+                    )?
+                } else {
+                    let tree = configuration.build_tree(store, &actor)?;
+                    routes::configured(tree, actor, durable)
+                }
             };
             Ok(if authenticated {
                 auth::protect(router, auth_store, auth_actor)

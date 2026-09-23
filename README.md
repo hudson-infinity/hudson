@@ -6,6 +6,14 @@ run the model → tools → results → verification loop.
 The same loop supports coding services, data processing, analysis, and delegated
 work. Domain behavior belongs in tools, skills, and agent configuration.
 
+## Serve customer-defined agents
+
+Customers can publish versioned tools and agents over an authenticated API, then
+submit tasks by agent reference. Hudson persists the run and a separate worker
+handles execution, approvals and recovery. The installation operator supplies
+approved model/tool connections; customers supply schemas and instructions.
+See the [customer API walkthrough](examples/customer-api/README.md).
+
 ## Run an agent
 
 Requires Rust 1.92.0 (pinned in this repository) and an `OPENAI_API_KEY` in your

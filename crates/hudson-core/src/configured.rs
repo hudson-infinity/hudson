@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Definition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    publication_sources: Option<serde_json::Value>,
     name: String,
     instructions: String,
     #[serde(default)]
@@ -826,6 +828,43 @@ impl FrozenDefinition {
 }
 
 impl Configuration {
+    /// Customer publications get a separate shared budget for each idempotent
+    /// root submission. Trusted startup configurations retain their explicit group.
+    pub(crate) fn for_submission(&self, actor: &Actor, request_key: &str) -> crate::Result<Self> {
+        let mut configuration = self.clone();
+        if self
+            .0
+            .publication_sources
+            .as_ref()
+            .is_some_and(|sources| sources.get("customer_agent").is_some())
+        {
+            if request_key.is_empty() || request_key.len() > 256 {
+                return Err(crate::Error::Invalid(
+                    "customer submissions require a request key of 1 to 256 bytes".into(),
+                ));
+            }
+            let budget = configuration
+                .0
+                .shared_model_budget
+                .as_mut()
+                .ok_or_else(|| {
+                    crate::Error::Conflict("customer publication is missing its budget".into())
+                })?;
+            budget.group = format!(
+                "run-{}",
+                crate::definitions::digest(&(&budget.group, actor, request_key))?
+            );
+        }
+        Ok(configuration)
+    }
+    pub(crate) fn from_effective_definition(value: serde_json::Value) -> crate::Result<Self> {
+        let definition: Definition = serde_json::from_value(value)?;
+        Self::restore_publication(serde_json::to_value(FrozenDefinition::freeze(definition))?)
+            .map_err(|error| crate::Error::Invalid(error.to_string()))
+    }
+    pub(crate) fn publication_sources(&self) -> Option<&serde_json::Value> {
+        self.0.publication_sources.as_ref()
+    }
     pub(crate) fn freeze_publication(&self) -> crate::Result<serde_json::Value> {
         Ok(serde_json::to_value(FrozenDefinition::freeze(
             self.0.clone(),

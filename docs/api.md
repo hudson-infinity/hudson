@@ -10,7 +10,7 @@ response schemas. The API is currently a preview with unversioned paths.
 
 Start with the [README server command](../README.md#use-the-http-api). This host
 binds to loopback and uses one configured workspace/actor identity. Agent definitions
-are loaded at startup. Credential issuance uses separate operator commands.
+can be loaded at startup or published through authenticated catalog mode. Credential issuance uses separate operator commands.
 
 | Request | Purpose |
 | --- | --- |
@@ -153,3 +153,37 @@ configured workspace/actor per server, not a hosted multi-tenant platform. Separ
 customers need separate configured instances and storage namespaces. Hudson and
 Hudson Sandbox use separate credentials and resource ownership; future integration
 will use an explicit service adapter.
+
+## Publish customer tools and agents
+
+Run with `--catalog host.json` instead of `--config`; this requires `--database`,
+`--require-api-token`, and `--temporal-task-queue`. The catalog belongs to the
+configured workspace/actor and contains approved versioned model profiles and tool
+connections. Worker credentials are never read by this admission API. Follow the
+[complete CLI walkthrough](../examples/customer-api/README.md).
+
+| Request | Purpose |
+| --- | --- |
+| `GET /capabilities` | List permitted model/connection references and limits |
+| `POST /tools` | Publish `{request_key, tool}`; return an immutable revision receipt |
+| `GET /tools/{name}/versions/{version}` | Read the public tool definition |
+| `POST /agents` | Publish `{request_key, agent}` selecting tool revisions |
+| `GET /agents/{name}/versions/{version}` | Read the public agent definition |
+| `POST /runs` | Submit `{agent_ref, request_key, input}` for a published revision |
+
+Publication returns `201` on success, including identical retries. Changed content
+under the same version or retry key returns `409`. A policy or execution ceiling
+violation returns `403`; unknown or unavailable references return `404`. Public
+bodies cannot set identities, credentials, destinations, host paths or worker queues.
+The existing 64 KiB body limit applies.
+
+The run's shared model-call budget is per root submission, including its children.
+A retry keeps the same counters. Another request key creates another task with its
+own allowance. Model-call limits do not represent currency quotas. Tools inherit
+host effect/approval requirements and can request stricter handling.
+
+The same run status, approval, reply and cancellation routes work after API restart.
+Workers started with `hudson-temporal --published ... worker` load the saved agent
+and execution credentials independently. Never mix configured and published
+workers on the same queue. The live OpenAPI document shows publication routes only
+in catalog mode and requires `agent_ref` and `request_key` there.

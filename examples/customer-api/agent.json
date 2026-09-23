@@ -1,0 +1,11 @@
+{
+  "request_key": "customer-assistant-v1",
+  "agent": {
+    "name": "customer-assistant",
+    "version": 1,
+    "instructions": "Help our team with customer records. Use lookup_customer and cite the record ID in your answer.",
+    "model_profile": {"id": "standard", "version": 1},
+    "tools": [{"id": "lookup_customer", "version": 1}],
+    "capabilities": {"context": true, "memory": false, "user_input": true}
+  }
+}

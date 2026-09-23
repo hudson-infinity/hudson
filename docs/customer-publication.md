@@ -1,7 +1,7 @@
 # Customer agent and tool publication
 
-Status: trusted atomic publication and dynamic worker loading are implemented;
-customer HTTP publication is still planned. This extends the authenticated
+Status: authenticated tool/agent publication, submission by revision, and dynamic
+worker loading are implemented. See the [customer walkthrough](../examples/customer-api/README.md). This extends the authenticated
 single-instance API. Existing startup configuration and operator commands remain
 available. Hudson Sandbox remains a separate product; this work does not load
 customer code or add a host shell.
@@ -84,11 +84,10 @@ insufficient; the reconstruction contract is:
 - Keep child scheduling, approvals and uncertain-effect reconciliation in the
   existing runtime/Temporal path. Customer configuration cannot pick another host.
 
-A new API route is not complete until a separate worker can execute its published
-revision after both API and worker restart. Existing startup-only operation remains
-supported throughout migration.
+The integration test executes a customer-defined tool through a separate restarted
+worker after API restart. Existing startup-only operation remains supported.
 
-## Acceptance evidence required
+## Acceptance coverage
 
 - Publish a custom tool and an agent using it through authenticated HTTP; reject
   cross-workspace references and attempts to submit host-only fields.
@@ -124,6 +123,33 @@ remain valid after runs start.
 Validation includes immutable retries, ownership, nested rollback, preservation of
 live state, deleted skill sources, and concurrent PostgreSQL publication followed
 by reconnection and run reconstruction. Dynamic worker reconstruction is covered separately by Temporal integration tests.
-Public request validation and the restarted API-to-worker acceptance test above
-remain required before advertising self-service
-publication.
+Public request validation and API/worker restart are exercised by
+`crates/hudson-temporal/tests/publication_api.rs` and `scripts/smoke_publication.py`.
+
+## Public API and host catalog
+
+`--catalog` requires PostgreSQL, bearer authentication, and a Temporal queue.
+`GET /capabilities` exposes approved model/connection references and policy limits,
+without credential names or destinations. Customers publish tools with `POST /tools`,
+then select those immutable tool revisions in `POST /agents`. Definition bodies
+reject unknown fields recursively. `GET /tools/{name}/versions/{version}` and the
+corresponding agent route return only the public definition.
+
+Model and connection versions are installed atomically and cannot change in place.
+A connection selects one exact HTTP endpoint or MCP method. Its effect and approval
+rules form minimum requirements. A tool may impose stricter handling. New agent
+publications can only select capabilities present in the current host catalog;
+existing published agents retain their effective snapshot. Removing an entry from
+the catalog does not revoke existing agents; explicit runtime policy revocation is
+still an operator action.
+
+`POST /runs` in catalog mode requires `agent_ref`, `request_key`, and `input`.
+Each new root submission gets a distinct durable shared budget, derived from the
+authenticated owner, agent revision and retry key. Children use that root budget.
+Admission commits the budget and run together; invalid input leaves neither behind.
+Retries retain counters, and workers reconstruct the same binding after restart.
+Publication retries return the original effective defaults even if the operator
+subsequently changes catalog limits or removes a connection. New revisions must
+use the currently approved capabilities. Nested agents have their own immutable
+name/version identities; changing a child also requires a new child version.
+The execution cache is bounded to 64 root submissions.

@@ -40,6 +40,27 @@ pub fn execute(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let base = args.url.trim_end_matches('/');
     let response = match args.command {
         Command::Health => client.get(format!("{base}/health")).send()?,
+        Command::Capabilities => client.get(format!("{base}/capabilities")).send()?,
+        Command::PublishTool { file } => client
+            .post(format!("{base}/tools"))
+            .json(&read_json(&file)?)
+            .send()?,
+        Command::PublishAgent { file } => client
+            .post(format!("{base}/agents"))
+            .json(&read_json(&file)?)
+            .send()?,
+        Command::Tool { name, version } => client
+            .get(format!(
+                "{base}/tools/{}/versions/{version}",
+                definition_name(&name)?
+            ))
+            .send()?,
+        Command::Agent { name, version } => client
+            .get(format!(
+                "{base}/agents/{}/versions/{version}",
+                definition_name(&name)?
+            ))
+            .send()?,
         Command::Start(start) => {
             let body = submission(start)?;
             client.post(format!("{base}/runs")).json(&body).send()?
@@ -100,25 +121,43 @@ fn submission(start: Start) -> Result<Value, Box<dyn std::error::Error>> {
     let input = if let Some(task) = start.task {
         json!(task)
     } else if let Some(path) = start.input_file {
-        let reader: Box<dyn Read> = if path == std::path::Path::new("-") {
-            Box::new(std::io::stdin())
-        } else {
-            Box::new(std::fs::File::open(path)?)
-        };
-        let mut bytes = Vec::new();
-        reader.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
-        if bytes.len() as u64 > MAX_BYTES {
-            return Err("JSON input exceeds 64 KiB".into());
-        }
-        serde_json::from_slice(&bytes)?
+        read_json(&path)?
     } else if let Some(order) = start.order {
         json!({"order_id":order,"action":if start.refund {"refund"} else {"lookup"}})
     } else {
         return Err("provide --task, --input-file, or fixture --order".into());
     };
-    let body = json!({"input":input,"request_key":start.request_key});
+    let mut body = json!({"input":input,"request_key":start.request_key});
+    if let Some(agent) = start.agent {
+        body["agent_ref"] = json!({"id":definition_name(&agent)?,"version":start.agent_version.ok_or("agent version required")?});
+    }
     if serde_json::to_vec(&body)?.len() as u64 > MAX_BYTES {
         return Err("submission exceeds the API's 64 KiB body limit".into());
     }
     Ok(body)
+}
+
+fn definition_name(name: &str) -> Result<&str, Box<dyn std::error::Error>> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+    {
+        return Err("invalid definition name".into());
+    }
+    Ok(name)
+}
+fn read_json(path: &std::path::Path) -> Result<Value, Box<dyn std::error::Error>> {
+    let reader: Box<dyn Read> = if path == std::path::Path::new("-") {
+        Box::new(std::io::stdin())
+    } else {
+        Box::new(std::fs::File::open(path)?)
+    };
+    let mut bytes = Vec::new();
+    reader.take(64 * 1024 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > 64 * 1024 {
+        return Err("JSON input exceeds 64 KiB".into());
+    }
+    Ok(serde_json::from_slice(&bytes)?)
 }

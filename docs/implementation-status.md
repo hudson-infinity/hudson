@@ -2,7 +2,8 @@
 
 The managed-capability extension is tracked in [capability-delivery.md](capability-delivery.md).
 Its requirement-by-requirement audit and local verification are complete. The
-historical initial-milestone notes below are supplemented by that current audit.
+historical initial-milestone notes below are supplemented by that audit and
+the [customer publication delivery](customer-publication.md).
 
 Status: the requested initial agent harness is implemented and locally verified.
 The user clarified provider scope to **OpenAI, Anthropic, and Gemini for now**.
@@ -29,13 +30,13 @@ records delivery to main; package publication and deployment are separate steps.
 | Rust implementation, maintainable module boundaries | Six Cargo crates; workspace tests and Clippy | Current architecture/development guides consolidated; later API cleanup remains possible |
 | PostgreSQL | Reconnect and shared-budget database tests; multi-process approval smoke | SIGKILL recovery smoke and local operator receipt reconciliation now pass; automatic ownership remains deferred |
 | GPT default; OpenAI, Anthropic, Gemini | Current protocol tests cover authentication, schemas, complete tool cycles, continuation metadata, output caps and usage; default model selection tests pass | Anthropic live requests are unverified; model-specific/native multimodal features are outside this version |
-| Customer-defined tools | Rust registry, configured HTTP tools, and pinned MCP servers; approval-aware runtime tests | Hosted authentication is outside the current local API |
+| Customer-defined tools | Rust registry, HTTP/MCP adapters, and authenticated versioned tool/agent registration; approval-aware runtime tests | One configured identity per API; connections are provisioned by the operator; no arbitrary uploaded code |
 | Skills | Inline, Markdown and standard SKILL.md packages, on-demand resources, immutable contents tests | Package scripts are read-only resources and are never executed |
 | Goals | Run objective, deterministic value criteria, recorded verifier-tool checks and operation evidence | Tool owners establish artifact-specific correctness; passing shape checks alone do not prove truth |
 | Subagents | Configured trees, shared call budgets, persisted lineage, cancellation and join; child-provider routing and approval after restart pass | Durable dependencies and bounded repeated delegation are in the extension; the original worker/server remains synchronous |
 | Temporal execution | Foreground/background process test, real-server concurrent team test, Postgres question replay after worker restart; SIGKILL during an approved write with no replay and receipt reconciliation | Local configuration and identity; durable submission intent and worker publication recovery are implemented; no hosted multi-tenant service |
 | Low model spend | Live GPT and capped Gemini tool cycles; routine checks use local stubs; output and shared-call caps | Provider token reports are recorded; lost responses and currency costs remain unavailable |
-| Usable product | README commands, generic HTTP CLI, JSON examples, config check, operator controls | Local worker/server installation passed; registry publication is not configured |
+| Usable product | README commands, authenticated publication CLI/API, JSON examples, config check, operator controls | Local worker/server installation passed; package-registry publication and hosted deployment remain separate |
 
 ## Documented first milestone
 

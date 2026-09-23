@@ -2,6 +2,7 @@
 pub mod adapters;
 pub mod budgets;
 pub mod credentials;
+pub mod customer;
 pub mod definitions;
 pub mod dispatch;
 pub mod models;

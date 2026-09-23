@@ -64,7 +64,7 @@ cargo run -p hudson-temporal -- \
 This mode requires no agent file. It reloads the root's immutable publication for
 each revision and uses that root's tree for delegated children, even when another
 publication uses the same child name. Worker-side credentials are resolved when
-the revision is first used. The cache holds at most 64 revisions; evicting a cached
+the revision is first used. The cache holds at most 64 root submissions; evicting a cached
 runtime does not remove definitions or run state. Different tree members keep
 their independent executor locks.
 
@@ -72,8 +72,8 @@ Use a dedicated queue per configured workspace/actor and database namespace. Do
 not mix startup-configured and published workers on that queue. Queue mismatches,
 unpublished roots, and another publication owner's runs are rejected. The
 scheduler checks pinned goals and budgets before starting a saved request.
-`--published` currently supports only `worker`; customer HTTP publication and
-submission by published reference are still being implemented. Trusted Rust hosts
+`--published` supports `worker`; customers publish and submit through the
+[authenticated catalog API](api.md#publish-customer-tools-and-agents). Trusted Rust hosts
 can use `RunActivities::published` and `SchedulingPump::published` directly.
 
 ## Durability boundary
