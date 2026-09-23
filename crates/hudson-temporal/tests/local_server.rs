@@ -438,6 +438,21 @@ fn cli_scenario(recover: bool) {
                 command
             };
             if recover {
+                let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
+                let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
+                let tree = hudson_core::configured::Configuration::load(file.path()).unwrap()
+                    .build_temporal_tree(store.clone(), &actor).unwrap();
+                let incompatible = tree.runtime.submit_scheduled(
+                    &actor, tree.reference.clone(), serde_json::json!({"task":"finish"}),
+                    Some("incompatible-goal".into()),
+                    Some(hudson_core::models::Goal {
+                        objective: "A different immutable goal".into(),
+                        success_schema: serde_json::json!({"type":"string"}),
+                        criteria: vec![],
+                    }),
+                    Some(hudson_temporal::ExecutionClient::schedule_target(&namespace, &namespace)),
+                ).unwrap();
+                drop(tree);
                 let interrupted = output(command().env("TEMPORAL_ADDRESS", "http://[invalid").args(["run","--input-file",input.path().to_str().unwrap(),"--request-key","task-1","--background"]).spawn().unwrap());
                 assert!(!interrupted.status.success());
                 let stderr = String::from_utf8(interrupted.stderr).unwrap();
@@ -454,6 +469,8 @@ fn cli_scenario(recover: bool) {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                 }
                 server_thread.join().unwrap();
+                assert_eq!(store.inspect(&actor, incompatible).unwrap().status, RunStatus::Queued,
+                    "a mismatched goal must remain deferred while valid work completes");
                 drop(worker);
                 let completed = output(command().args(["run","--resume", &id.to_string()]).spawn().unwrap());
                 assert!(completed.status.success(), "{}", String::from_utf8_lossy(&completed.stderr));
