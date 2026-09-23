@@ -637,7 +637,14 @@
           "objective": {
             "type": "string"
           },
-          "success_schema": {}
+          "success_schema": {},
+          "criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Criterion"
+            },
+            "default": []
+          }
         },
         "required": [
           "objective",
@@ -653,6 +660,13 @@
           },
           "feedback": {
             "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "description": "Successful recorded tool executions; provenance alone does not establish factual correctness."
           }
         },
         "required": [
@@ -1085,6 +1099,105 @@
           "payload"
         ],
         "additionalProperties": false
+      },
+      "Criterion": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "equals"
+                ]
+              },
+              "pointer": {
+                "type": "string"
+              },
+              "expected": {}
+            },
+            "required": [
+              "type",
+              "pointer",
+              "expected"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "number_range"
+                ]
+              },
+              "pointer": {
+                "type": "string"
+              },
+              "min": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "pointer",
+              "min",
+              "max"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "contains"
+                ]
+              },
+              "pointer": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "pointer",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Evidence": {
+        "type": "object",
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "tool_name": {
+            "type": "string"
+          },
+          "request_digest": {
+            "type": "string"
+          },
+          "result_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "tool_name",
+          "request_digest",
+          "result_digest"
+        ]
       }
     }
   }
