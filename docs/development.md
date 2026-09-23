@@ -202,8 +202,10 @@ the configured tree before recording an approval decision.
 Same-store lineage links each child to its parent operation, prevents reparenting
 and cycles, and scopes joins to the original parent/specialist. Parent cancellation
 propagates to attached descendants; unresolved child effects keep cancellation
-unresolved. Execution and joining are cooperative and synchronous, not concurrent
-background scheduling. Separate-store library delegation requires application-owned
+unresolved. The original worker/server execution and joining are cooperative and
+synchronous. The [Temporal host](temporal.md) uses `build_temporal_tree` and
+`into_scheduled` to submit children, schedule them concurrently, and durably wait
+for them. Separate-store library delegation requires application-owned
 lifecycle coordination. Library APIs are `subagents::register_with_join` and
 `budgets::BudgetedModel`; custom wiring must explicitly share the budget wrapper.
 

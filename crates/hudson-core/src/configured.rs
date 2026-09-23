@@ -178,14 +178,57 @@ impl ConfiguredTree {
     }
 }
 
+/// Independently locked agent executors for a durable scheduler. Different team
+/// members can execute concurrently while each configured executor stays serial.
+pub struct ScheduledTree {
+    pub store: Store,
+    runtimes: ChildRuntimes,
+    bindings: std::collections::BTreeMap<VersionRef, Option<Goal>>,
+}
+impl ConfiguredTree {
+    pub fn into_scheduled(self) -> ScheduledTree {
+        let bindings = self.bindings();
+        let store = self.runtime.store.clone();
+        let mut runtimes = self.children;
+        runtimes.insert(
+            self.reference,
+            std::sync::Arc::new(std::sync::Mutex::new(self.runtime)),
+        );
+        ScheduledTree {
+            store,
+            runtimes,
+            bindings,
+        }
+    }
+}
+impl ScheduledTree {
+    pub fn tick(&self, actor: &Actor, id: uuid::Uuid) -> crate::Result<RunView> {
+        let run = self.store.inspect(actor, id)?;
+        let goal = self
+            .bindings
+            .get(&run.agent_ref)
+            .ok_or_else(|| crate::Error::Conflict("agent version is not configured".into()))?;
+        self.store
+            .validate_resume(actor, id, &run.agent_ref, goal)?;
+        self.runtimes
+            .get(&run.agent_ref)
+            .ok_or(crate::Error::NotFound)?
+            .lock()
+            .map_err(|_| crate::Error::Conflict("agent runtime unavailable".into()))?
+            .tick(actor, id)
+    }
+}
+
 fn build(
     definition: Definition,
     store: Store,
     actor: &Actor,
     budget: Option<&SharedBudget>,
     children: &mut ChildRuntimes,
+    deferred: bool,
 ) -> Result<(AgentRuntime, VersionRef), Box<dyn std::error::Error>> {
     let selected_model = selected_model(&definition)?.to_owned();
+    let is_team = !definition.subagents.is_empty();
     let transport_fingerprint = crate::definitions::digest(&(
         &definition.provider,
         &definition.endpoint,
@@ -290,10 +333,17 @@ fn build(
     for child_definition in definition.subagents {
         let alias = format!("delegate_{}", child_definition.name);
         let description = format!("Delegate a task to specialist {}. Inspect its returned status before claiming completion.", child_definition.name);
-        let (child, child_ref) = build(child_definition, store.clone(), actor, budget, children)?;
+        let (child, child_ref) = build(
+            child_definition,
+            store.clone(),
+            actor,
+            budget,
+            children,
+            deferred,
+        )?;
         let child = std::sync::Arc::new(std::sync::Mutex::new(child));
         children.insert(child_ref.clone(), child.clone());
-        let delegation_tools = crate::subagents::register_shared_with_join(
+        let delegation_tools = crate::subagents::register_shared(
             &mut registry,
             child,
             actor.clone(),
@@ -301,6 +351,7 @@ fn build(
             &alias,
             &description,
             "configured-subagents",
+            deferred,
         )?;
         for tool in delegation_tools {
             bindings.push(AgentTool {
@@ -370,7 +421,11 @@ fn build(
         version: definition.version,
         schema_version: SCHEMA_VERSION,
         name: definition.name,
-        instructions: definition.instructions,
+        instructions: if deferred && is_team {
+            format!("{}\n\nDelegation submits durable child runs. The scheduler waits for the delegated team before your next model turn. Use each join_delegate tool with the returned child_run ID to retrieve the completed result; the original delegation receipt only reports submission. Do not claim success without inspecting each child result.", definition.instructions)
+        } else {
+            definition.instructions
+        },
         allow_user_input: definition.allow_user_input,
         model: selected_model,
         tools: bindings,
@@ -505,11 +560,37 @@ impl Configuration {
         store: Store,
         actor: &Actor,
     ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
+        self.build_with_scheduler(store, actor, false)
+    }
+
+    /// Build a tree whose child tools only submit/inspect runs. The caller must
+    /// schedule children and wait for them before advancing the parent model.
+    pub fn build_temporal_tree(
+        self,
+        store: Store,
+        actor: &Actor,
+    ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
+        self.build_with_scheduler(store, actor, true)
+    }
+
+    fn build_with_scheduler(
+        self,
+        store: Store,
+        actor: &Actor,
+        deferred: bool,
+    ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
         let mut definition = self.0;
         let goal = definition.goal.take();
         let budget = definition.shared_model_budget.take();
         let mut children = ChildRuntimes::new();
-        let (runtime, reference) = build(definition, store, actor, budget.as_ref(), &mut children)?;
+        let (runtime, reference) = build(
+            definition,
+            store,
+            actor,
+            budget.as_ref(),
+            &mut children,
+            deferred,
+        )?;
         Ok(ConfiguredTree {
             runtime,
             reference,

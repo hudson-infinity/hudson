@@ -1,0 +1,30 @@
+[package]
+name = "hudson-temporal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+hudson-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+tokio.workspace = true
+clap.workspace = true
+futures = "0.3"
+temporalio-sdk = "=1.0.0"
+temporalio-client = "=1.0.0"
+temporalio-macros = "=1.0.0"
+temporalio-common = "=1.0.0"
+temporalio-workflow = "=1.0.0"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+temporalio-sdk = { version = "=1.0.0", features = ["testing"] }
+tempfile = "3"
+# Enable TLS for the SDK test server downloader (uses reqwest 0.13).
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+tiny_http = "0.12"

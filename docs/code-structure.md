@@ -1,6 +1,6 @@
 # Hudson code structure
 
-The implementation is one Cargo workspace with five crates. Domain behavior
+The implementation is one Cargo workspace with six crates. Domain behavior
 belongs in tools and configuration. The loop has its own module and performs no IO.
 
 ```text
@@ -49,6 +49,9 @@ crates/
     main.rs            loopback server and startup configuration
     config.rs          server arguments
     routes.rs          configured/fixture HTTP runs and controls
+  hudson-temporal/src/
+    lib.rs             durable run workflow, child scheduling, runtime activities
+    main.rs            worker, foreground/background submissions, resume
   hudson-cli/src/
     main.rs            generic HTTP client
     commands.rs        command arguments
@@ -58,9 +61,9 @@ crates/
 ## Dependencies
 
 ```text
-hudson-worker ─┐
-              ├─→ hudson-core ─→ hudson-harness
-hudson-server ┘
+hudson-worker ──┐
+hudson-temporal ├─→ hudson-core ─→ hudson-harness
+hudson-server ──┘
 
 hudson-cli ── HTTP/JSON ─→ hudson-server
 ```
@@ -82,6 +85,10 @@ keeps each child executor and routes resume by the run’s pinned Agent version.
 Child approval therefore uses that child’s provider and tool bindings, including
 after restart. Library
 applications can construct `Runtime` directly with custom adapters.
+
+The separate Temporal host schedules the same runtime through activities. It
+uses `ScheduledTree` to give specialists independent executor locks and Temporal
+child workflows for durable team joins. See [Temporal execution](temporal.md).
 
 ## One task through the code
 

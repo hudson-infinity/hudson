@@ -35,6 +35,16 @@ A minimal configuration:
 }
 ```
 
+## Foreground, background, and teams
+
+The Temporal host runs either a single agent or a lead with configured `subagents`.
+Foreground waits for the result; `run --background` returns a run ID while a
+separate worker continues. Both use the same loop, permissions, tools, budgets,
+and PostgreSQL records. Team members execute as child workflows.
+
+See [Temporal setup and commands](docs/temporal.md). The existing synchronous
+worker and local HTTP server remain available for local workflows.
+
 ## Connect your tools and specialists
 
 - **HTTP tools:** configure endpoint, JSON input schema, effect, and optional
@@ -168,9 +178,10 @@ Database tests are opt-in; ordinary workspace tests do not run them.
 The local worker uses one fixed developer identity. Configured HTTP tools may
 require approval; delegation is preauthorized. Library callers can configure policies.
 Uncertain effects are never automatically replayed. Operator-assisted interruption
-marking and tool receipt reconciliation exist; automated worker ownership and full
-crash recovery remain unfinished. Child cancellation propagation and cooperative joining are implemented; background
-concurrent scheduling, currency accounting, automatic skill-file discovery,
+marking and tool receipt reconciliation exist. The Temporal host provides durable
+background scheduling and concurrent team workflows; uncertain external effects
+still require evidence-based reconciliation. Automatic submission outbox recovery,
+currency accounting, automatic skill-file discovery,
 and hosted product integration remain unfinished. No sandbox isolation is implemented;
 application Rust tools are trusted code.
 

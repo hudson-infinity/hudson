@@ -75,9 +75,43 @@ where
     M: ModelExecutor + 'static,
     T: ToolExecutor + 'static,
 {
+    register_shared(
+        registry,
+        child,
+        actor,
+        agent,
+        name,
+        description,
+        policy,
+        false,
+    )
+}
+
+/// Register submission/inspection tools for a durable external scheduler.
+/// These callbacks never execute a child's model or tools themselves.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn register_shared<B, M, T>(
+    registry: &mut ToolRegistry,
+    child: std::sync::Arc<std::sync::Mutex<Runtime<B, M, T>>>,
+    actor: Actor,
+    agent: VersionRef,
+    name: &str,
+    description: &str,
+    policy: &str,
+    deferred: bool,
+) -> Result<Vec<Tool>>
+where
+    B: Backend + 'static,
+    M: ModelExecutor + 'static,
+    T: ToolExecutor + 'static,
+{
     let key = format!(
         "hudson.delegate.{}",
-        digest(&(&actor, &agent, name, description))?
+        if deferred {
+            digest(&(&actor, &agent, name, description, "temporal"))?
+        } else {
+            digest(&(&actor, &agent, name, description))?
+        }
     );
     let (mut task_schema, default_text_task) = child
         .lock()
@@ -165,7 +199,11 @@ where
                 "child run {id} could not attach to an active parent"
             )));
         }
-        drive(&mut child, actor, id)
+        if deferred {
+            inspect(&child, actor, id)
+        } else {
+            drive(&mut child, actor, id)
+        }
     })?;
     registry.register(join_key, move |invocation| {
         let id = invocation.arguments["run_id"]
@@ -181,7 +219,11 @@ where
             .map_err(|_| {
                 ExecutionError::Failed("child does not belong to this parent and specialist".into())
             })?;
-        drive(&mut child, &actor, id)
+        if deferred {
+            inspect(&child, &actor, id)
+        } else {
+            drive(&mut child, &actor, id)
+        }
     })?;
     Ok(vec![tool, join_tool])
 }
@@ -220,4 +262,18 @@ fn drive<B: Backend, M: ModelExecutor, T: ToolExecutor>(
     Err(ExecutionError::Unknown(format!(
         "child run {id} reached delegation driver limit"
     )))
+}
+
+fn inspect<B: Backend, M: ModelExecutor, T: ToolExecutor>(
+    child: &Runtime<B, M, T>,
+    actor: &Actor,
+    id: uuid::Uuid,
+) -> std::result::Result<serde_json::Value, ExecutionError> {
+    let view = child
+        .store
+        .inspect(actor, id)
+        .map_err(|_| ExecutionError::Unknown(format!("cannot inspect child run {id}")))?;
+    Ok(
+        json!({"child_run":id,"status":view.status,"result":view.result,"wait":view.wait,"reason":view.reason,"usage":view.usage}),
+    )
 }

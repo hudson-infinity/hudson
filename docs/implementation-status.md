@@ -9,7 +9,7 @@ hosting. The broader platform roadmap in `goals.md` remains future work, consist
 with the request to focus on the agent rather than infrastructure.
 
 The final verification used `python3 scripts/check.py --database
-hudson_harness_test_20260921`: all checks passed, with no paid provider requests.
+hudson_harness_test_20260921 --temporal`: all checks passed, with no paid provider requests.
 Provider protocol tests establish adapter behavior; they do not establish live
 availability or quality for every model. Earlier live GPT and Gemini checks are
 recorded below; a live Anthropic request has not been verified.
@@ -22,13 +22,14 @@ records delivery to main; package publication and deployment are separate steps.
 | Requirement | Current evidence | Boundaries and later work |
 | --- | --- | --- |
 | Generic, domain-independent loop | `hudson-harness/src/agent_loop.rs`; checkpoint and real tool-cycle tests | Broader context/multimodal behavior is not implemented |
-| Rust implementation, maintainable module boundaries | Five Cargo crates; workspace tests and Clippy | Current architecture/development guides consolidated; later API cleanup remains possible |
+| Rust implementation, maintainable module boundaries | Six Cargo crates; workspace tests and Clippy | Current architecture/development guides consolidated; later API cleanup remains possible |
 | PostgreSQL | Reconnect and shared-budget database tests; multi-process approval smoke | SIGKILL recovery smoke and local operator receipt reconciliation now pass; automatic ownership remains deferred |
 | GPT default; OpenAI, Anthropic, Gemini | Current protocol tests cover authentication, schemas, complete tool cycles, continuation metadata, output caps and usage; default model selection tests pass | Anthropic live requests are unverified; model-specific/native multimodal features are outside this version |
 | Customer-defined tools | Rust registry and configured HTTP tools; HTTP and approval smoke tests | Hosted authentication is outside the current local API |
 | Skills | Inline and Markdown catalogs, on-demand loading, immutable contents tests | Optional standard package/frontmatter support; not required for current explicit-file API |
 | Goals | Run objective plus deterministic success schema; mismatch/completion regression | Application-specific semantic/business checks beyond output contracts |
-| Subagents | Configured trees, shared call budgets, persisted lineage, cancellation and join; child-provider routing and approval after restart pass | Child execution is synchronous/cooperative; background concurrent scheduling is later work |
+| Subagents | Configured trees, shared call budgets, persisted lineage, cancellation and join; child-provider routing and approval after restart pass | The original worker/server remains synchronous; the Temporal host schedules concurrent child workflows |
+| Temporal execution | Foreground/background process test, real-server concurrent team test, Postgres question replay after worker restart; SIGKILL during an approved write with no replay and receipt reconciliation | Local configuration and identity; no hosted multi-tenant service or submission outbox |
 | Low model spend | Live GPT and capped Gemini tool cycles; routine checks use local stubs; output and shared-call caps | Provider token reports are recorded; lost responses and currency costs remain unavailable |
 | Usable product | README commands, generic HTTP CLI, JSON examples, config check, operator controls | Local worker/server installation passed; registry publication is not configured |
 
