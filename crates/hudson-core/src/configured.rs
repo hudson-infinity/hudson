@@ -6,7 +6,7 @@ use crate::{
     models::*,
     runtime::Runtime,
     security::Policy,
-    skills::{Skill, SkillCatalog},
+    skills::{Skill, SkillCatalog, SkillPackage},
     storage::Store,
 };
 use hudson_harness::AgentLoop;
@@ -41,6 +41,12 @@ struct Definition {
     skills: Vec<Skill>,
     #[serde(default)]
     skill_files: Vec<SkillFile>,
+    #[serde(default)]
+    skill_packages: Vec<std::path::PathBuf>,
+    #[serde(skip)]
+    loaded_packages: Vec<SkillPackage>,
+    #[serde(default)]
+    mcp_servers: Vec<ConfiguredMcpServer>,
     #[serde(default)]
     output_schema: Option<serde_json::Value>,
     #[serde(default)]
@@ -80,8 +86,19 @@ fn load_skill_files(
             &path,
         )?);
     }
-    if !definition.skills.is_empty() {
-        SkillCatalog::new(definition.skills.clone())?;
+    for path in std::mem::take(&mut definition.skill_packages) {
+        let path = if path.is_absolute() {
+            path
+        } else {
+            base.join(path)
+        };
+        definition.loaded_packages.push(SkillPackage::load(&path)?);
+    }
+    if !definition.skills.is_empty() || !definition.loaded_packages.is_empty() {
+        SkillCatalog::with_packages(
+            definition.skills.clone(),
+            definition.loaded_packages.clone(),
+        )?;
     }
     for child in &mut definition.subagents {
         load_skill_files(child, base)?;
@@ -110,6 +127,59 @@ struct HttpTool {
     token_env: Option<String>,
     #[serde(default)]
     require_approval: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfiguredMcpServer {
+    endpoint: String,
+    #[serde(default)]
+    bearer_env: Option<String>,
+    #[serde(default = "mcp_timeout")]
+    timeout_seconds: u64,
+    #[serde(default = "mcp_output_limit")]
+    max_response_bytes: usize,
+    #[serde(default)]
+    require_approval: Option<bool>,
+    tools: Vec<ConfiguredMcpTool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfiguredMcpTool {
+    name: String,
+    remote_name: String,
+    description: String,
+    input_schema: serde_json::Value,
+    effect: Effect,
+    #[serde(default)]
+    require_approval: Option<bool>,
+}
+fn mcp_timeout() -> u64 {
+    60
+}
+fn mcp_output_limit() -> usize {
+    1_048_576
+}
+impl ConfiguredMcpServer {
+    fn adapter_config(&self) -> crate::adapters::mcp::McpServerConfig {
+        crate::adapters::mcp::McpServerConfig {
+            endpoint: self.endpoint.clone(),
+            bearer_env: self.bearer_env.clone(),
+            timeout_seconds: self.timeout_seconds,
+            max_response_bytes: self.max_response_bytes,
+            tools: self
+                .tools
+                .iter()
+                .map(|tool| crate::adapters::mcp::McpToolBinding {
+                    name: tool.name.clone(),
+                    remote_name: tool.remote_name.clone(),
+                    description: tool.description.clone(),
+                    input_schema: tool.input_schema.clone(),
+                    effect: tool.effect.clone(),
+                })
+                .collect(),
+        }
+    }
 }
 
 fn output_tokens() -> u32 {
@@ -315,7 +385,7 @@ fn build(
     if let Some(memory) = &definition.memory {
         let read_policy = format!("memory-read:{}:{}", definition.name, definition.version);
         let write_policy = format!("memory-write:{}:{}", definition.name, definition.version);
-        for tool in crate::memory::register_tools(
+        for mut tool in crate::memory::register_tools(
             &mut registry,
             store.clone(),
             actor.clone(),
@@ -323,6 +393,9 @@ fn build(
             &read_policy,
             &write_policy,
         )? {
+            tool.id = format!("{}:memory:{}", definition.name, tool.name);
+            tool.version = definition.version;
+            tool.created_at = 0;
             bindings.push(AgentTool {
                 tool_ref: tool.reference(),
                 alias: tool.name.clone(),
@@ -344,13 +417,16 @@ fn build(
 
     if let Some(context) = &definition.context {
         let policy_ref = format!("context:{}:{}", definition.name, definition.version);
-        let tool = crate::context::register(
+        let mut tool = crate::context::register(
             &mut registry,
             store.clone(),
             &actor.workspace_id,
             &policy_ref,
             context,
         )?;
+        tool.id = format!("{}:context:{}", definition.name, tool.name);
+        tool.version = definition.version;
+        tool.created_at = 0;
         bindings.push(AgentTool {
             tool_ref: tool.reference(),
             alias: tool.name.clone(),
@@ -367,12 +443,9 @@ fn build(
         )?;
     }
 
-    if !definition.skills.is_empty() {
-        let mut tool = SkillCatalog::new(definition.skills)?.register(
-            &mut registry,
-            &actor.workspace_id,
-            "skills",
-        )?;
+    if !definition.skills.is_empty() || !definition.loaded_packages.is_empty() {
+        let mut tool = SkillCatalog::with_packages(definition.skills, definition.loaded_packages)?
+            .register(&mut registry, &actor.workspace_id, "skills")?;
         tool.created_at = 0;
         bindings.push(AgentTool {
             tool_ref: tool.reference(),
@@ -388,6 +461,43 @@ fn build(
                 require_approval: false,
             },
         )?;
+    }
+    for server in definition.mcp_servers {
+        let config = server.adapter_config();
+        for (mut tool, spec) in crate::adapters::mcp::register_tools(
+            &config,
+            &mut registry,
+            &actor.workspace_id,
+            "mcp-pending",
+        )?
+        .into_iter()
+        .zip(&server.tools)
+        {
+            tool.id = format!("{}:mcp:{}", definition.name, spec.name);
+            tool.version = definition.version;
+            tool.created_at = 0;
+            tool.policy_ref = format!(
+                "mcp:{}:{}:{}",
+                definition.name, definition.version, spec.name
+            );
+            store.ensure_policy(
+                &actor.workspace_id,
+                &tool.policy_ref,
+                Policy {
+                    actors: [actor.id.clone()].into(),
+                    approvers: [actor.id.clone()].into(),
+                    require_approval: spec
+                        .require_approval
+                        .or(server.require_approval)
+                        .unwrap_or(spec.effect == Effect::Write),
+                },
+            )?;
+            bindings.push(AgentTool {
+                tool_ref: tool.reference(),
+                alias: tool.name.clone(),
+            });
+            store.ensure_tool(tool)?;
+        }
     }
     for child_definition in definition.subagents {
         let alias = format!("delegate_{}", child_definition.name);
@@ -580,7 +690,7 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
     if definition.allow_user_input {
         names.insert("ask_user".to_owned());
     }
-    if !definition.skills.is_empty() {
+    if !definition.skills.is_empty() || !definition.loaded_packages.is_empty() {
         names.insert("load_skill".to_owned());
     }
     for tool in &definition.http_tools {
@@ -590,6 +700,17 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
         crate::definitions::validate_schema(&tool.input_schema)?;
         if let Some(schema) = &tool.output_schema {
             crate::definitions::validate_schema(schema)?;
+        }
+    }
+    if definition.mcp_servers.len() > 32 {
+        return Err("at most 32 MCP servers are allowed".into());
+    }
+    for server in &definition.mcp_servers {
+        server.adapter_config().validate()?;
+        for tool in &server.tools {
+            if !names.insert(tool.name.clone()) {
+                return Err("MCP tool name conflicts with another tool".into());
+            }
         }
     }
     for child in &definition.subagents {
@@ -775,5 +896,69 @@ mod tests {
             config.model = None;
             assert_eq!(selected_model(&config).is_ok(), provider == "openai");
         }
+    }
+    #[test]
+    fn mcp_aliases_cannot_shadow_any_enabled_capability() {
+        for alias in [
+            "ask_user",
+            "load_skill",
+            "recall_memory",
+            "retain_memory",
+            "delete_memory",
+            "read_context_artifact",
+            "delegate_child",
+            "join_delegate_child",
+            "http_custom",
+        ] {
+            let config: Definition = serde_json::from_value(serde_json::json!({
+                "name":"root","instructions":"help","allow_user_input":true,"context":{},
+                "memory":{"scope":{"name":"company"},"recall_limit":2},
+                "skills":[{"name":"analysis","description":"Analyze","instructions":"Help"}],
+                "http_tools":[{"name":"http_custom","description":"custom","endpoint":"http://127.0.0.1:9/tool","input_schema":{"type":"object"},"effect":"read"}],
+                "subagents":[{"name":"child","instructions":"help"}],
+                "mcp_servers":[{"endpoint":"http://127.0.0.1:9/mcp","tools":[{"name":alias,"remote_name":"remote","description":"tool","input_schema":{"type":"object"},"effect":"read"}]}]
+            })).unwrap();
+            assert!(
+                validate_contracts(&config).is_err(),
+                "allowed alias {alias}"
+            );
+        }
+        let mut config: Definition = serde_json::from_value(serde_json::json!({"name":"root","instructions":"help","mcp_servers":[{"endpoint":"http://127.0.0.1:9/mcp","tools":[{"name":"ask_user","remote_name":"remote","description":"tool","input_schema":{"type":"object"},"effect":"read"}]}]})).unwrap();
+        validate_contracts(&config).unwrap(); // Disabled built-in remains available as a custom alias.
+        config.mcp_servers.push(serde_json::from_value(serde_json::json!({"endpoint":"http://127.0.0.1:10/mcp","tools":[{"name":"ask_user","remote_name":"remote","description":"tool","input_schema":{"type":"object"},"effect":"read"}]})).unwrap());
+        assert!(validate_contracts(&config).is_err());
+    }
+
+    #[test]
+    fn rebuilding_shared_memory_context_and_mcp_team_is_stable() {
+        let source = serde_json::json!({
+            "name":"root","instructions":"help","provider":"ollama","model":"fixture",
+            "context":{},"memory":{"scope":{"name":"company"},"recall_limit":2},
+            "shared_model_budget":{"group":"team","limit":20},
+            "mcp_servers":[{"endpoint":"http://127.0.0.1:9/mcp","tools":[{"name":"custom","remote_name":"remote","description":"tool","input_schema":{"type":"object"},"effect":"read"}]}],
+            "subagents":[{"name":"child","instructions":"help","provider":"ollama","model":"fixture","context":{},"memory":{"scope":{"name":"company"},"recall_limit":2},"mcp_servers":[{"endpoint":"http://127.0.0.1:9/mcp","tools":[{"name":"custom","remote_name":"remote","description":"tool","input_schema":{"type":"object"},"effect":"read"}]}]}]
+        });
+        let store = Store::default();
+        let actor = Actor {
+            workspace_id: "company".into(),
+            id: "owner".into(),
+        };
+        for _ in 0..2 {
+            let definition: Definition = serde_json::from_value(source.clone()).unwrap();
+            validate_contracts(&definition).unwrap();
+            let tree = Configuration(definition)
+                .build_temporal_tree(store.clone(), &actor)
+                .unwrap();
+            assert_eq!(tree.bindings().len(), 2);
+            std::thread::sleep(std::time::Duration::from_millis(3));
+        }
+    }
+    #[test]
+    fn customer_mcp_example_loads_offline() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/customer-mcp.json");
+        let config = Configuration::load(&path).unwrap();
+        assert_eq!(config.0.loaded_packages.len(), 1);
+        assert_eq!(config.0.mcp_servers.len(), 1);
     }
 }

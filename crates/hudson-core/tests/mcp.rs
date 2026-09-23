@@ -59,6 +59,26 @@ impl Server {
                 let mut bytes = vec![0; length];
                 socket.read_exact(&mut bytes).unwrap();
                 let request: Value = serde_json::from_slice(&bytes).unwrap();
+                if mode == "model" {
+                    let step = counter.fetch_add(1, Ordering::SeqCst);
+                    let content = if step < 3 {
+                        let (name, args) = match step {
+                            0 => ("load_skill", json!({"name":"analysis"})),
+                            1 => (
+                                "load_skill",
+                                json!({"name":"analysis","resource":"references/rules.md"}),
+                            ),
+                            _ => ("customer_echo", json!({"message":"hello"})),
+                        };
+                        json!({"role":"assistant","content":null,"tool_calls":[{"id":format!("call-{step}"),"type":"function","function":{"name":name,"arguments":args.to_string()}}]})
+                    } else {
+                        assert!(request.to_string().contains("frozen-source-token"));
+                        json!({"role":"assistant","content":"{\"done\":true}"})
+                    };
+                    let body = json!({"choices":[{"message":content,"finish_reason":if step < 3 {"tool_calls"} else {"stop"}}]}).to_string();
+                    write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+                    continue;
+                }
                 let method = request["method"].as_str().unwrap();
                 let result = match method {
                     "initialize" => {
@@ -283,4 +303,76 @@ fn runtime_approval_and_unknown_write_preserve_operation_authority() {
         .unwrap();
     assert_eq!(op.status, OperationStatus::Unknown);
     assert_eq!(op.attempts.len(), 1);
+}
+
+#[test]
+fn configured_temporal_tree_loads_frozen_packages_and_approves_customer_mcp_tools() {
+    use hudson_core::{configured::Configuration, models::*, storage::Store};
+    for (server_approval, tool_approval, should_wait) in [
+        (None, None, true),
+        (Some(false), None, false),
+        (Some(false), Some(true), true),
+    ] {
+        let server = Server::new("json");
+        let model = Server::new("model");
+        let root =
+            std::env::temp_dir().join(format!("hudson-configured-mcp-{}", uuid::Uuid::new_v4()));
+        let package = root.join("analysis");
+        std::fs::create_dir_all(package.join("references")).unwrap();
+        std::fs::write(package.join("SKILL.md"),"---\nname: analysis\ndescription: Analyze data\n---\nRead references/rules.md before executing tools.").unwrap();
+        std::fs::write(package.join("references/rules.md"), "frozen-source-token").unwrap();
+        let mut mcp = serde_json::to_value(server.config()).unwrap();
+        if let Some(value) = server_approval {
+            mcp["require_approval"] = json!(value);
+        }
+        if let Some(value) = tool_approval {
+            mcp["tools"][0]["require_approval"] = json!(value);
+        }
+        let config = json!({"name":"configured","instructions":"Load analysis skill, read rules, echo hello, and return done.","model":"fixture","endpoint":model.endpoint,"skill_packages":["analysis"],"mcp_servers":[mcp]});
+        let path = root.join("agent.json");
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let configuration = Configuration::load(&path).unwrap();
+        std::fs::remove_dir_all(&package).unwrap(); // Build must use the frozen package, not reload it.
+        let store = Store::default();
+        let actor = Actor {
+            workspace_id: "customer".into(),
+            id: "owner".into(),
+        };
+        let mut tree = configuration
+            .build_temporal_tree(store.clone(), &actor)
+            .unwrap();
+        assert_eq!(server.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(model.calls.load(Ordering::SeqCst), 0);
+        let run = tree
+            .runtime
+            .submit(
+                &actor,
+                tree.reference.clone(),
+                json!({"task":"analyze"}),
+                None,
+            )
+            .unwrap();
+        let mut waited = false;
+        let mut completed = false;
+        for _ in 0..40 {
+            let view = tree.tick(&actor, run).unwrap();
+            if let Some(WaitReason::Approval { operation_id }) = view.wait {
+                assert!(should_wait);
+                assert_eq!(server.calls.load(Ordering::SeqCst), 0);
+                waited = true;
+                tree.runtime
+                    .approve(&actor, operation_id, true, now(), now() + 60_000)
+                    .unwrap();
+            }
+            if view.status == RunStatus::Completed {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed);
+        assert_eq!(waited, should_wait);
+        assert_eq!(server.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(model.calls.load(Ordering::SeqCst), 4);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

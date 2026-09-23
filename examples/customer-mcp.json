@@ -1,0 +1,45 @@
+{
+  "name": "customer-agent",
+  "instructions": "Help our team analyze customer records. Load the customer-analysis skill when relevant. Use only configured tools and report supporting record identifiers.",
+  "provider": "openai",
+  "model": "gpt-4.1-mini",
+  "skill_packages": ["skills/customer-analysis"],
+  "mcp_servers": [
+    {
+      "endpoint": "https://tools.example.com/mcp",
+      "bearer_env": "CUSTOMER_MCP_TOKEN",
+      "timeout_seconds": 60,
+      "max_response_bytes": 1048576,
+      "tools": [
+        {
+          "name": "lookup_customer",
+          "remote_name": "lookup_customer",
+          "description": "Read a customer record by its identifier.",
+          "input_schema": {
+            "type": "object",
+            "properties": {"customer_id": {"type": "string"}},
+            "required": ["customer_id"],
+            "additionalProperties": false
+          },
+          "effect": "read"
+        },
+        {
+          "name": "update_customer_note",
+          "remote_name": "update_customer_note",
+          "description": "Save a note on the customer record after approval.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "customer_id": {"type": "string"},
+              "note": {"type": "string"}
+            },
+            "required": ["customer_id", "note"],
+            "additionalProperties": false
+          },
+          "effect": "write",
+          "require_approval": true
+        }
+      ]
+    }
+  ]
+}

@@ -92,3 +92,24 @@ catalogs continue serving the original bytes. Binary resources are not supported
 
 The package layout follows https://agentskills.io/specification and MCP uses
 https://github.com/modelcontextprotocol/rust-sdk. No upstream project code is copied.
+
+## Customer configuration
+
+The worker/server configuration directly accepts `mcp_servers` and
+`skill_packages`; see `examples/customer-mcp.json`. Skill paths resolve relative
+to the configuration file, including packages configured on child agents. Packages
+are frozen during `Configuration::load`; startup/build does not contact MCP servers.
+All selected MCP schemas are validated offline before publication.
+
+Each MCP server and each selected tool can set `require_approval`. A tool's explicit
+setting overrides the server setting; otherwise writes require approval and reads
+do not. Approval settings belong to immutable per-agent/version policies and must
+not silently change on resume. Built-in names are reserved only when enabled.
+Aliases must be unique across HTTP tools, MCP servers, skills, memory/context tools,
+user input and delegation tools. Root and child agents can use the same remote
+server or memory scope without sharing their tool-policy identities.
+
+Replace the example endpoint and schemas with those discovered from your actual
+server, set `CUSTOMER_MCP_TOKEN` and your configured provider credential, then run
+the example through the existing worker or Temporal frontend. Disabling MCP or
+portable packages is simply omitting their fields or configuring empty lists.
