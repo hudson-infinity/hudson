@@ -86,7 +86,7 @@ recorded usage. Timing includes waits encountered while driving that case.
 For checks implemented by customer tools, use `tool_result_equals`:
 
 ```json
-{"type":"tool_result_equals","tool_name":"run_tests","arguments":{"suite":"acceptance"},"pointer":"/passed","expected":true}
+{"type":"tool_result_equals","tool_name":"run_tests","require_latest_tool":true,"arguments":{"suite":"acceptance"},"pointer":"/passed","expected":true}
 ```
 
 This requires the latest matching tool execution in this run to have succeeded
@@ -95,3 +95,7 @@ satisfy it; a newer failed or uncertain execution prevents an older passing resu
 from satisfying it. Omit `arguments` to match any arguments. The tool remains an
 ordinary authorized, budgeted operation. The tool owner must ensure that its result
 verifies the relevant artifact/version; Hudson does not infer that relationship.
+
+Set `require_latest_tool` to true when verification must follow all other tool
+work (for example, testing after file edits). Any later tool operation invalidates
+that check. It defaults to false for historical receipt checks.

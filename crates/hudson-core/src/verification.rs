@@ -24,6 +24,8 @@ pub enum Criterion {
     ToolResultEquals {
         tool_name: String,
         #[serde(default)]
+        require_latest_tool: bool,
+        #[serde(default)]
         arguments: Option<Value>,
         pointer: String,
         expected: Value,
@@ -75,6 +77,7 @@ impl Criterion {
         use crate::models::{OperationRequest, OperationResult, OperationStatus};
         let Self::ToolResultEquals {
             tool_name,
+            require_latest_tool,
             arguments,
             pointer,
             expected,
@@ -90,6 +93,10 @@ impl Criterion {
                 if &call.name == tool_name && arguments.as_ref().is_none_or(|args| args == &call.arguments))
         }).max_by_key(|operation| (operation.step_index, operation.request_index));
         latest.is_some_and(|operation| {
+            if *require_latest_tool && operations.iter().any(|other| {
+                matches!(other.request, OperationRequest::Tool { .. }) &&
+                (other.step_index, other.request_index) > (operation.step_index, operation.request_index)
+            }) { return false; }
             operation.status == OperationStatus::Succeeded && matches!(&operation.result,
                 Some(OperationResult::Tool { result }) if matches!(&result.outcome,
                     hudson_harness::ToolOutcome::Success { value } if value.pointer(pointer) == Some(expected)))

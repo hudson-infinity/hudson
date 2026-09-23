@@ -1189,7 +1189,11 @@
               "pointer": {
                 "type": "string"
               },
-              "expected": {}
+              "expected": {},
+              "require_latest_tool": {
+                "type": "boolean",
+                "default": false
+              }
             },
             "required": [
               "type",

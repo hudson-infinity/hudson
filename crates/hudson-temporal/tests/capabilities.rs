@@ -256,7 +256,7 @@ fn temporal_combines_customer_capabilities_and_persists_verified_evidence() {
         "memory":{"scope":{"name":"inventory"},"recall_limit":3,"retain_pointer":"/memo"},
         "context":{"offload_bytes":4096,"recent_exchanges":1,"excerpt_bytes":256,"page_bytes":512},
         "limits":{"max_context_bytes":10000,"max_model_calls":50,"max_harness_steps":200,"max_operations":120},
-        "goal":{"objective":"Verify warehouse inventory count","success_schema":{"type":"object","required":["total","memo","evidence"]},"criteria":[{"type":"equals","pointer":"/total","expected":42},{"type":"contains","pointer":"/evidence/0","text":"inventory-row-42"}]},
+        "goal":{"objective":"Verify warehouse inventory count","success_schema":{"type":"object","required":["total","memo","evidence"]},"criteria":[{"type":"tool_result_equals","tool_name":"inventory","arguments":{},"pointer":"/structuredContent/answer","expected":42},{"type":"equals","pointer":"/total","expected":42},{"type":"contains","pointer":"/evidence/0","text":"inventory-row-42"}]},
         "mcp_servers":[{"endpoint":format!("{}/mcp",fixture.endpoint),"timeout_seconds":5,"tools":[{"name":"inventory","remote_name":"inventory","description":"Read active inventory source data","input_schema":schema(),"effect":"read"}]}]
     }).to_string()).unwrap();
     let database = std::env::var("HUDSON_TEST_DATABASE")

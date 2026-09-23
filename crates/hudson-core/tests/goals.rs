@@ -103,6 +103,7 @@ fn completion_requires_recorded_tool_check_and_repairs_unsupported_claim() {
         fixtures::FixtureTools::default(),
     );
     let criterion = Criterion::ToolResultEquals {
+        require_latest_tool: true,
         tool_name: "lookup_order".into(),
         arguments: Some(json!({"order_id":"123"})),
         pointer: "/status".into(),
@@ -134,6 +135,16 @@ fn completion_requires_recorded_tool_check_and_repairs_unsupported_claim() {
         .unwrap()
         .clone();
     latest.step_index += 10;
+    let mut unrelated = latest.clone();
+    if let OperationRequest::Tool { call, .. } = &mut unrelated.request {
+        call.name = "edit_file".into();
+    }
+    operations.push(unrelated);
+    assert!(
+        !criterion.matches_with_operations(&json!(null), &operations),
+        "verification must follow subsequent tool work when freshness is required"
+    );
+    operations.pop();
     latest.status = OperationStatus::Failed;
     latest.result = None;
     operations.push(latest);
