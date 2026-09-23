@@ -138,6 +138,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
 
     /// One bounded local step. A caller can release this Runtime while the run waits.
     pub fn tick(&mut self, actor: &Actor, id: Uuid) -> Result<RunView> {
+        self.store.prepare_run_memory(actor, id)?;
         let run = self.store.read(|d| Ok(d.run(actor, id)?.clone()))?;
         if run.status.terminal() {
             return self.store.inspect(actor, id);
@@ -197,6 +198,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     ));
                 }
             }
+            crate::memory::append_snapshot(d, id, &mut config.instructions)?;
             Ok(config)
         })?;
         let context_policy = self.store.read(|d| {
@@ -301,6 +303,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     approval: None, attempts: vec![], result: None, revision: 0 });
             }
             let status = current.status;
+            crate::memory::retain_completed(d, &current)?;
             d.runs.insert(id, current);
             for operation in new_operations {
                 let operation_id = operation.meta.id;
