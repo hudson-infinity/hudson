@@ -436,7 +436,14 @@ fn cli_scenario(mode: SubmissionMode) {
                 request.respond(tiny_http::Response::from_string(r#"{"choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}"#)).unwrap();
             });
             let file = tempfile::NamedTempFile::new().unwrap();
-            std::fs::write(file.path(), serde_json::json!({"name":"cli-agent","instructions":"finish","endpoint":endpoint,"input_schema":{"type":"object","required":["task"]}}).to_string()).unwrap();
+            let mut definition = serde_json::json!({"name":"cli-agent","instructions":"finish","endpoint":endpoint,"input_schema":{"type":"object","required":["task"]}});
+            if matches!(mode, SubmissionMode::Http) {
+                definition["api_key_env"] = serde_json::json!("HUDSON_EXECUTION_ONLY_TEST_KEY");
+                definition["http_tools"] = serde_json::json!([{"name":"customer_lookup", "description":"lookup",
+                    "endpoint":endpoint, "token_env":"HUDSON_EXECUTION_ONLY_TEST_KEY",
+                    "input_schema":{"type":"object"}, "effect":"read"}]);
+            }
+            std::fs::write(file.path(), definition.to_string()).unwrap();
             let input = tempfile::NamedTempFile::new().unwrap();
             std::fs::write(input.path(), r#"{"task":"finish"}"#).unwrap();
             let database = std::env::var("HUDSON_TEST_DATABASE").unwrap_or_else(|_| "hudson_harness_test_20260921".into());
@@ -446,6 +453,7 @@ fn cli_scenario(mode: SubmissionMode) {
                 command.args(["--config", file.path().to_str().unwrap(), "--database", &database, "--namespace", &namespace, "--task-queue", &namespace])
                     .env("TEMPORAL_ADDRESS", format!("127.0.0.1:{port}"))
                     .env("TEMPORAL_NAMESPACE", "default")
+                    .env("HUDSON_EXECUTION_ONLY_TEST_KEY", "test-worker-only")
                     .stdout(Stdio::piped()).stderr(Stdio::piped());
                 command
             };
@@ -453,7 +461,7 @@ fn cli_scenario(mode: SubmissionMode) {
                 let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
                 let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
                 let tree = hudson_core::configured::Configuration::load(file.path()).unwrap()
-                    .build_temporal_tree(store.clone(), &actor).unwrap();
+                    .build_admission_tree(store.clone(), &actor).unwrap();
                 let incompatible = tree.runtime.submit_scheduled(
                     &actor, tree.reference.clone(), serde_json::json!({"task":"finish"}),
                     Some("incompatible-goal".into()),
@@ -475,7 +483,7 @@ fn cli_scenario(mode: SubmissionMode) {
                         "--config", file.path().to_str().unwrap(), "--database", &database,
                         "--namespace", &namespace, "--temporal-task-queue", &namespace,
                         "--port", &api_port.to_string(),
-                    ]).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap());
+                    ]).env_remove("HUDSON_EXECUTION_ONLY_TEST_KEY").stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap());
                     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
                     while std::net::TcpStream::connect(("127.0.0.1", api_port)).is_err() {
                         assert!(std::time::Instant::now() < deadline, "API did not start");
