@@ -51,14 +51,39 @@ worker and local HTTP server remain available for local workflows.
   credential environment variable. Hudson validates arguments and sends an
   operation ID as the service's idempotency key.
 - **Rust tools:** register application functions with `ToolRegistry`.
-- **Skills:** provide named instruction bodies; the model loads them on demand.
+- **MCP tools:** configure servers and pinned tool schemas. Calls use the same
+  authorization, approval, and durable-operation path as other tools.
+- **Skills:** provide instruction bodies or standard `SKILL.md` packages; the
+  model loads instructions and resources on demand.
+- **Context:** enable bounded history and large-output archival with scoped
+  retrieval of the original evidence.
+- **Memory:** configure a private scope for bounded recall, corrections, deletion,
+  and retention of explicitly selected completed-output fields.
 - **Subagents:** nest agent definitions under `subagents`. Each child has its own
-  model, tools, instructions, and limits. The tree shares a model-call budget.
-- **Goals:** attach an objective and JSON Schema success contract to a run.
+  model, tools, instructions, and limits. The lead can select dependencies at run
+  time; Hudson enforces child/root budgets and bounds repeated delegation.
+- **Goals:** attach an objective, output schema, value criteria, or required
+  verifier-tool results. Failed checks enter the repair loop; assessments include
+  references to recorded tool evidence.
 
 See [analyst configuration](examples/analyst.json), [structured data agent](examples/data-agent.json), [team configuration](examples/team.json),
 the [runnable Python HTTP tool](examples/python-tool/README.md),
 and the [development guide](docs/development.md) for configuration and library APIs.
+
+Customer examples include a [real-estate inventory tool](examples/real-estate/README.md)
+and [MCP/portable skill configuration](examples/customer-mcp.json). Capability
+configuration is optional: omitted memory/context/MCP/skills are not exposed.
+Bash and sandbox execution are not built in to this delivery.
+
+For service embedding, the [Temporal execution client](docs/temporal.md#embedding-execution-in-a-rust-service)
+starts background runs or waits for foreground results. See [context](docs/context-management.md),
+[memory](docs/memory.md), [MCP and skills](docs/mcp-skills.md), and
+[team coordination](docs/team-coordination.md) for the contracts.
+
+[Evaluation](docs/evaluation.md) supports held-out checks and reports usage/latency.
+The [Harbor integration](integrations/harbor/README.md) supplies coding, data and
+research regression tasks with independent verifiers. Fixture success verifies
+execution behavior; it is not evidence of model quality or superiority.
 
 ## Keep runs in PostgreSQL
 
