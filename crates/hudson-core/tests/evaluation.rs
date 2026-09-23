@@ -19,6 +19,7 @@ fn evaluation_preserves_approval_and_rejects_invalid_cases_before_dispatch() {
         ToolRegistry::new(),
     );
     let case = Case {
+        criteria: vec![],
         name: "refund-needs-approval".into(),
         input: json!({"order_id":"123","action":"refund"}),
         expected_schema: json!({}),

@@ -18,6 +18,8 @@ pub struct Case {
     pub name: String,
     pub input: Value,
     pub expected_schema: Value,
+    #[serde(default)]
+    pub criteria: Vec<crate::verification::Criterion>,
 }
 
 #[derive(Debug, Serialize)]
@@ -48,6 +50,9 @@ pub fn validate_cases(cases: &[Case]) -> Result<()> {
             ));
         }
         definitions::validate_schema(&case.expected_schema)?;
+        for criterion in &case.criteria {
+            criterion.validate()?;
+        }
     }
     Ok(())
 }
@@ -110,9 +115,16 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
         } else {
             // Some(Value::Null) is a valid final result; None is not.
             match &run.result {
-                Some(value) => {
-                    definitions::validate(&case.expected_schema, value).map_err(|e| e.to_string())
-                }
+                Some(value) => definitions::validate(&case.expected_schema, value)
+                    .map_err(|e| e.to_string())
+                    .and_then(|()| {
+                        case.criteria
+                            .iter()
+                            .position(|rule| !rule.matches(value))
+                            .map_or(Ok(()), |i| {
+                                Err(format!("held-out criterion {} failed", i + 1))
+                            })
+                    }),
                 None => Err("completed run has no result".into()),
             }
         };
