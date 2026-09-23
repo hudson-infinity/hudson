@@ -9,7 +9,8 @@ pub struct AgentLoop;
 
 #[derive(Default, Serialize, Deserialize)]
 struct State {
-    messages: Vec<Message>,
+    #[serde(flatten)]
+    history: context::History,
     phase: Phase,
 }
 
@@ -57,7 +58,7 @@ impl Backend for AgentLoop {
         };
         let action = match (&state.phase, input) {
             (Phase::Start, Input::Start { value }) => {
-                state.messages.push(Message {
+                state.history.messages.push(Message {
                     role: Role::User,
                     content: vec![Content::Json { value }],
                 });
@@ -73,7 +74,7 @@ impl Backend for AgentLoop {
                 if calls.is_empty() || ids.len() != calls.len() || ids.contains("") {
                     return Err(invalid("tool calls require unique nonempty IDs"));
                 }
-                state.messages.push(Message {
+                state.history.messages.push(Message {
                     role: Role::Assistant,
                     content: calls
                         .iter()
@@ -114,7 +115,7 @@ impl Backend for AgentLoop {
                 }
             }
             (Phase::UserInput { call_id }, Input::User { value }) => {
-                state.messages.push(Message {
+                state.history.messages.push(Message {
                     role: Role::Tool,
                     content: vec![Content::ToolResult {
                         result: ToolResult {
@@ -138,7 +139,7 @@ impl Backend for AgentLoop {
                         .find(|r| r.call_id == call.call_id)
                         .unwrap()
                         .clone();
-                    state.messages.push(Message {
+                    state.history.messages.push(Message {
                         role: Role::Tool,
                         content: vec![Content::ToolResult { result }],
                     });
@@ -151,7 +152,7 @@ impl Backend for AgentLoop {
                     response: ModelResponse::Final { output },
                 },
             ) => {
-                state.messages.push(Message {
+                state.history.messages.push(Message {
                     role: Role::Assistant,
                     content: vec![Content::Json {
                         value: output.clone(),
@@ -174,7 +175,7 @@ impl Backend for AgentLoop {
                     feedback,
                 },
             ) => {
-                state.messages.push(Message { role: Role::User, content: vec![Content::Text { text: format!("The output did not pass verification. Correct it using this feedback: {feedback}") }] });
+                state.history.messages.push(Message { role: Role::User, content: vec![Content::Text { text: format!("The output did not pass verification. Correct it using this feedback: {feedback}") }] });
                 request(config, &mut state)?
             }
             _ => return Err(invalid("input does not match the pending loop action")),
@@ -194,7 +195,36 @@ impl Backend for AgentLoop {
 }
 
 fn request(config: &Config, state: &mut State) -> Result<Action, HarnessError> {
-    let request = context::build(config, state.messages.clone())?;
+    let request = context::build(config, state.history.model_messages())?;
     state.phase = Phase::Model;
     Ok(Action::CallModel { request })
+}
+
+/// Read the portable history without exposing loop control state to hosts.
+pub fn history(checkpoint: &Checkpoint) -> Result<context::History, HarnessError> {
+    if checkpoint.backend != "hudson" || checkpoint.backend_version != 1 {
+        return Err(invalid("context management requires the Hudson agent loop"));
+    }
+    if checkpoint.step == 0 && checkpoint.payload.is_null() {
+        return Ok(context::History::default());
+    }
+    let state: State =
+        serde_json::from_value(checkpoint.payload.clone()).map_err(|e| invalid(&e.to_string()))?;
+    Ok(state.history)
+}
+
+/// Replace only conversation history; phase, step and pending call IDs are unchanged.
+pub fn with_history(
+    checkpoint: &Checkpoint,
+    history: context::History,
+) -> Result<Checkpoint, HarnessError> {
+    let mut state: State = if checkpoint.step == 0 && checkpoint.payload.is_null() {
+        State::default()
+    } else {
+        serde_json::from_value(checkpoint.payload.clone()).map_err(|e| invalid(&e.to_string()))?
+    };
+    state.history = history;
+    let mut updated = checkpoint.clone();
+    updated.payload = serde_json::to_value(state).map_err(|e| invalid(&e.to_string()))?;
+    Ok(updated)
 }

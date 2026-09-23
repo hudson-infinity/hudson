@@ -199,16 +199,32 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
             }
             Ok(config)
         })?;
-        let transition = match self.engine.advance(&config, &run.state, input.clone()) {
+        let context_policy = self.store.read(|d| {
+            Ok(d.context_policies
+                .get(&(actor.workspace_id.clone(), run.agent_ref.clone()))
+                .cloned()
+                .flatten())
+        })?;
+        let prepared = match crate::context::advance(
+            &self.engine,
+            &config,
+            &run.state,
+            input.clone(),
+            context_policy.as_ref(),
+            &actor.workspace_id,
+            id,
+        ) {
             Ok(t) => t,
             Err(e) => {
                 self.fail(actor, id, run.revision, &e.to_string())?;
                 return self.store.inspect(actor, id);
             }
         };
+        let transition = prepared.transition;
         let committed = self.store.transact(|d| {
             let mut current = d.run(actor, id)?.clone();
             if current.revision != run.revision { return Err(Error::Conflict("stale run revision".into())); }
+            crate::context::commit(d, &prepared.artifacts)?;
             bounded(&transition.checkpoint, current.limits.max_context_bytes)?;
             bounded(&transition.action, current.limits.max_context_bytes)?;
             let agent = d.agents[&(actor.workspace_id.clone(), current.agent_ref.clone())].clone();

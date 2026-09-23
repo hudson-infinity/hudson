@@ -7,6 +7,10 @@ use uuid::Uuid;
 pub(crate) struct Data {
     #[serde(default)]
     pub memories: BTreeMap<Uuid, crate::memory::MemoryRecord>,
+    #[serde(default)]
+    pub context_artifacts: BTreeMap<String, crate::context::ContextArtifact>,
+    #[serde(default, with = "super::pairs")]
+    pub context_policies: BTreeMap<(String, VersionRef), Option<crate::context::ContextPolicy>>,
     #[serde(default, with = "super::pairs")]
     pub model_budgets: BTreeMap<(String, String), crate::budgets::ModelBudget>,
     #[serde(default, with = "super::pairs")]
