@@ -69,3 +69,9 @@ A full Docker plumbing smoke is also available:
 ```
 
 This script deliberately returns reference-solution commands from a fixture model. It exercises actual Harbor Docker environments, the Rust loop, bridge, and independent verifier. It must never be reported as model benchmark performance. Validation on 2026-09-23 completed all three Docker trials with verifier reward 1 and no exceptions. Fixture usage counters are synthetic; no paid provider was called.
+
+For estimated dollar costs, pass `--pricing rates.json` to the comparison reporter.
+Supply `baseline` and `candidate` objects, each containing `input_per_million` and
+`output_per_million` USD rates for that run's model. Costs remain null when any
+model call lacks reported usage. These are estimates from supplied rates, not
+billing receipts; omitted pricing never becomes a zero-cost claim.

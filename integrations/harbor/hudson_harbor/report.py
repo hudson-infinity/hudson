@@ -3,6 +3,7 @@ import argparse
 import json
 from pathlib import Path
 import statistics
+import math
 
 
 def load_job(path):
@@ -31,7 +32,13 @@ def load_job(path):
     return trials
 
 
-def compare(baseline, candidate):
+def compare(baseline, candidate, pricing=None):
+    if pricing is not None:
+        for side in ("baseline", "candidate"):
+            rates = pricing[side]
+            for key in ("input_per_million", "output_per_million"):
+                if type(rates[key]) not in (int, float) or not math.isfinite(rates[key]) or rates[key] < 0:
+                    raise ValueError("pricing must contain finite nonnegative rates")
     if baseline.keys() != candidate.keys():
         raise ValueError("comparison requires the same task set")
     rows = []
@@ -41,9 +48,16 @@ def compare(baseline, candidate):
             raise ValueError("comparison requires equal repetitions")
         if any(x["budgets"] != a[0]["budgets"] for x in a + b):
             raise ValueError("comparison requires identical budgets")
-        def summary(trials):
+        def summary(trials, side):
             rewards = [x["reward"] for x in trials]
             reported = sum(x["usage"].get("reported_model_calls", 0) for x in trials)
+            cost = None
+            if pricing is not None and all(x["usage"].get("reported_model_calls", 0) == x["usage"].get("model_calls", 0)
+                                          and x["usage"].get("model_calls", 0) > 0 for x in trials):
+                rates = pricing[side]
+                cost = sum(x["usage"].get("reported_input_tokens", 0) * rates["input_per_million"]
+                           + x["usage"].get("reported_output_tokens", 0) * rates["output_per_million"]
+                           for x in trials) / 1_000_000
             return {"trials": len(trials), "verified_successes": sum(x == 1 for x in rewards),
                     "missing_rewards": sum(x is None for x in rewards),
                     "mean_elapsed_ms": statistics.mean(x["elapsed_ms"] for x in trials),
@@ -51,14 +65,15 @@ def compare(baseline, candidate):
                     "reported_model_calls": reported,
                     "reported_input_tokens": sum(x["usage"].get("reported_input_tokens", 0) for x in trials) if reported else None,
                     "reported_output_tokens": sum(x["usage"].get("reported_output_tokens", 0) for x in trials) if reported else None,
-                    "cost_usd": None}
-        rows.append({"task": name, "baseline": summary(a), "candidate": summary(b)})
-    return {"tasks": rows, "note": "Verifier rewards measure correctness; model cost is unavailable, not zero."}
+                    "estimated_cost_usd": cost}
+        rows.append({"task": name, "baseline": summary(a, "baseline"), "candidate": summary(b, "candidate")})
+    return {"tasks": rows, "note": "Verifier rewards measure correctness; costs use supplied rates only when every model call reports usage. Unknown cost is null."}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("baseline")
     parser.add_argument("candidate")
+    parser.add_argument("--pricing", type=Path, help="JSON baseline/candidate input_per_million and output_per_million USD rates")
     args = parser.parse_args()
-    print(json.dumps(compare(load_job(args.baseline), load_job(args.candidate)), indent=2))
+    print(json.dumps(compare(load_job(args.baseline), load_job(args.candidate), json.loads(args.pricing.read_text()) if args.pricing else None), indent=2))
