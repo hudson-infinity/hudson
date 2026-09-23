@@ -38,6 +38,10 @@ pub struct Args {
     pub database: Option<String>,
     #[arg(long, default_value = "hudson")]
     pub namespace: String,
+    #[arg(long, default_value = "local", conflicts_with = "demo")]
+    pub workspace_id: String,
+    #[arg(long, default_value = "developer", conflicts_with = "demo")]
+    pub actor_id: String,
     #[arg(long)]
     pub request_key: Option<String>,
     #[arg(long, requires = "database", group = "action")]

@@ -39,8 +39,8 @@ pub fn execute(args: &Args) -> Result<bool, Box<dyn std::error::Error>> {
         &args.namespace,
     )?;
     let actor = Actor {
-        workspace_id: "local".into(),
-        id: "developer".into(),
+        workspace_id: args.workspace_id.clone(),
+        id: args.actor_id.clone(),
     };
     let runtime = Runtime::new(store, AgentLoop, NoModel, ToolRegistry::new());
     let output = if let Some(id) = args.inspect_run {

@@ -5,6 +5,9 @@ use clap::{Parser, Subcommand};
 pub struct Args {
     #[arg(long, default_value = "http://127.0.0.1:4318")]
     pub url: String,
+    /// Read the bearer token from this environment variable, never from an argument.
+    #[arg(long)]
+    pub api_token_env: Option<String>,
     #[command(subcommand)]
     pub command: Command,
 }

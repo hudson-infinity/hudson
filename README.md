@@ -133,11 +133,13 @@ then POST `{"approved":true}` to `/operations/{id}/approval` to resume execution
 POST `/runs/{id}/cancel` to request cancellation, including during model/tool IO.
 Unknown effects stay unresolved until an operator reconciles them.
 
-This server binds only to loopback and uses one local developer identity. It runs
+This server binds only to loopback and uses one configured workspace/actor identity. It runs
 one configured agent tree per process. The default local driver executes sequentially;
 `--temporal-task-queue QUEUE` with `--database` instead saves work for a separate
 Temporal worker ([setup](docs/api.md#separate-api-admission-from-temporal-execution)). It is a local
-integration API; authentication and hosted multi-tenant serving are not implemented.
+integration API. Enable `--require-api-token` for persisted scoped bearer
+authentication ([setup](docs/api.md#require-scoped-api-credentials)). Hosted
+multi-tenant serving is not implemented.
 Without `--database`, its state is in memory. `--demo` selects the fixture preview.
 
 ## Recover and evaluate
@@ -202,7 +204,8 @@ provider mappings, HTTP tools, approvals, limits, goals, and configured subagent
 execution. Explicit PostgreSQL tests cover reconnect and shared-budget persistence.
 Database tests are opt-in; ordinary workspace tests do not run them.
 
-The local worker uses one fixed developer identity. Configured HTTP tools may
+The local worker defaults to the local developer identity; `--workspace-id` and
+`--actor-id` select a trusted host identity. Configured HTTP tools may
 require approval; delegation is preauthorized. Library callers can configure policies.
 Uncertain effects are never automatically replayed. Operator-assisted interruption
 marking and tool receipt reconciliation exist. The Temporal host provides durable

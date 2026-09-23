@@ -18,6 +18,10 @@ struct Args {
     namespace: String,
     #[arg(long, default_value = "hudson")]
     task_queue: String,
+    #[arg(long, default_value = "local")]
+    workspace_id: String,
+    #[arg(long, default_value = "developer")]
+    actor_id: String,
     #[command(subcommand)]
     command: Command,
 }
@@ -41,8 +45,8 @@ enum Command {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let actor = Actor {
-        workspace_id: "local".into(),
-        id: "developer".into(),
+        workspace_id: args.workspace_id.clone(),
+        id: args.actor_id.clone(),
     };
     let store = Store::postgres_local("/tmp", &args.database, &args.namespace)?;
     let tree = Configuration::load(&args.config)?.build_temporal_tree(store, &actor)?;

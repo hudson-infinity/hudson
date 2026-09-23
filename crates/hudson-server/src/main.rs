@@ -1,3 +1,4 @@
+mod auth;
 mod config;
 mod routes;
 
@@ -7,6 +8,7 @@ use config::Args;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    let authenticated = args.require_api_token;
     // Blocking HTTP clients and PostgreSQL are constructed outside Tokio's async context.
     let router = std::thread::spawn(move || -> Result<axum::Router, String> {
         if args.demo {
@@ -23,22 +25,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None => hudson_core::storage::Store::default(),
             };
             let actor = hudson_core::models::Actor {
-                workspace_id: "local".into(),
-                id: "developer".into(),
+                workspace_id: args.workspace_id,
+                id: args.actor_id,
             };
-            if let Some(task_queue) = args.temporal_task_queue {
+            let auth_store = store.clone();
+            let auth_actor = actor.clone();
+            let router = if let Some(task_queue) = args.temporal_task_queue {
                 let tree = configuration.build_admission_tree(store, &actor)?;
-                return Ok(routes::scheduled(
+                routes::scheduled(
                     tree,
                     actor,
                     hudson_core::scheduling::ScheduleTarget {
                         scheduler: format!("temporal:{}", args.namespace),
                         task_queue,
                     },
-                )?);
-            }
-            let tree = configuration.build_tree(store, &actor)?;
-            Ok(routes::configured(tree, actor, durable))
+                )?
+            } else {
+                let tree = configuration.build_tree(store, &actor)?;
+                routes::configured(tree, actor, durable)
+            };
+            Ok(if authenticated {
+                auth::protect(router, auth_store, auth_actor)
+            } else {
+                router
+            })
         };
         build().map_err(|error| error.to_string())
     })
@@ -46,8 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .map_err(|_| "server initialization failed")??;
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", args.port)).await?;
     eprintln!(
-        "Hudson local API: http://{} (single user, no authentication)",
-        listener.local_addr()?
+        "Hudson local API: http://{} ({})",
+        listener.local_addr()?,
+        if authenticated {
+            "bearer authentication required"
+        } else {
+            "single user, no authentication"
+        }
     );
     axum::serve(listener, router)
         .with_graceful_shutdown(async {
