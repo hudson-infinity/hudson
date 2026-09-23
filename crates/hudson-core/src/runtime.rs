@@ -186,7 +186,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
             self.fail(actor, id, run.revision, "harness step budget exhausted")?;
             return self.store.inspect(actor, id);
         }
-        let config = self.store.read(|d| {
+        let (config, dependency_artifacts) = self.store.read(|d| {
             let agent = &d.agents[&(actor.workspace_id.clone(), run.agent_ref.clone())];
             let mut config = crate::adapters::harness::project(agent, d)?;
             if let Some(goal) = &run.goal {
@@ -202,8 +202,9 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                 }
             }
             crate::memory::append_snapshot(d, id, &mut config.instructions)?;
-            crate::coordination::append_dependency_context(d, id, &mut config.instructions)?;
-            Ok(config)
+            let artifacts =
+                crate::coordination::append_dependency_context(d, id, &mut config.instructions)?;
+            Ok((config, artifacts))
         })?;
         let context_policy = self.store.read(|d| {
             Ok(d.context_policies
@@ -231,6 +232,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
             let mut current = d.run(actor, id)?.clone();
             if current.revision != run.revision { return Err(Error::Conflict("stale run revision".into())); }
             crate::context::commit(d, &prepared.artifacts)?;
+            crate::context::commit(d, &dependency_artifacts)?;
             bounded(&transition.checkpoint, current.limits.max_context_bytes)?;
             bounded(&transition.action, current.limits.max_context_bytes)?;
             let agent = d.agents[&(actor.workspace_id.clone(), current.agent_ref.clone())].clone();

@@ -80,19 +80,19 @@ fn prefix(text: &str, max: usize) -> &str {
     &text[..end]
 }
 
-fn offload(
+pub(crate) fn offload(
     value: &mut Value,
     artifacts: &mut Vec<ContextArtifact>,
     workspace: &str,
     run: Uuid,
     policy: &ContextPolicy,
+    kind: &str,
 ) -> Result<()> {
     let encoded = serde_json::to_string(value)?;
     if encoded.len() <= policy.offload_bytes {
         return Ok(());
     }
-    let artifact =
-        ContextArtifact::new(workspace, run, json!({"kind":"tool_output","value":value}))?;
+    let artifact = ContextArtifact::new(workspace, run, json!({"kind":kind,"value":value}))?;
     *value = json!({"context_artifact":{"artifact_id":artifact.id,"bytes":encoded.len(),"preview":prefix(&encoded, policy.excerpt_bytes),"preview_is_partial":true,"retrieve_with":"read_context_artifact"}});
     artifacts.push(artifact);
     Ok(())
@@ -122,7 +122,7 @@ pub(crate) fn advance<B: Backend>(
         for content in &mut message.content {
             if let Content::ToolResult { result } = content {
                 if let ToolOutcome::Success { value } = &mut result.outcome {
-                    offload(value, &mut artifacts, workspace, run, policy)?;
+                    offload(value, &mut artifacts, workspace, run, policy, "tool_output")?;
                 }
             }
         }
@@ -130,7 +130,7 @@ pub(crate) fn advance<B: Backend>(
     if let Input::Tools { results } = &mut input {
         for result in results {
             if let ToolOutcome::Success { value } = &mut result.outcome {
-                offload(value, &mut artifacts, workspace, run, policy)?;
+                offload(value, &mut artifacts, workspace, run, policy, "tool_output")?;
             }
         }
     }
