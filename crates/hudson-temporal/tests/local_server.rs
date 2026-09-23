@@ -91,7 +91,7 @@ fn team_children_run_concurrently_before_lead_continues() {
     let server_thread = std::thread::spawn(move || {
         let mut root_calls = 0;
         let mut handlers = Vec::new();
-        for _ in 0..5 {
+        for _ in 0..6 {
             let mut request = server
                 .recv_timeout(std::time::Duration::from_secs(40))
                 .unwrap()
@@ -108,12 +108,13 @@ fn team_children_run_concurrently_before_lead_continues() {
             handlers.push(std::thread::spawn(move || {
                 let message = if first {
                     serde_json::json!({"role":"assistant","content":null,"tool_calls":[
-                        {"id":"a","type":"function","function":{"name":"delegate_a","arguments":"{\"task\":\"do a\"}"}},
-                        {"id":"b","type":"function","function":{"name":"delegate_b","arguments":"{\"task\":\"do b\"}"}}
+                        {"id":"a","type":"function","function":{"name":"delegate_a","arguments":serde_json::json!({"task":"do a","task_key":"a"}).to_string()}},
+                        {"id":"b","type":"function","function":{"name":"delegate_b","arguments":serde_json::json!({"task":"do b","task_key":"b"}).to_string()}},
+                        {"id":"c","type":"function","function":{"name":"delegate_c","arguments":serde_json::json!({"task":"use a result","task_key":"c","depends_on":["a"]}).to_string()}}
                     ]})
                 } else if join {
-                    assert_eq!(child_calls.load(Ordering::SeqCst), 2);
-                    let calls = ["a", "b"].into_iter().map(|name| {
+                    assert_eq!(child_calls.load(Ordering::SeqCst), 3);
+                    let calls = ["a", "b", "c"].into_iter().map(|name| {
                         let receipt = body["messages"].as_array().unwrap().iter()
                             .find(|message| message["role"] == "tool" && message["tool_call_id"] == name).unwrap();
                         let receipt: serde_json::Value = serde_json::from_str(receipt["content"].as_str().unwrap()).unwrap();
@@ -123,7 +124,12 @@ fn team_children_run_concurrently_before_lead_continues() {
                     }).collect::<Vec<_>>();
                     serde_json::json!({"role":"assistant","content":null,"tool_calls":calls})
                 } else {
-                    if !is_root {
+                    if !is_root && body["model"] == "c-model" {
+                        let instructions = body["messages"][0]["content"].as_str().unwrap();
+                        assert!(instructions.contains("Completed prerequisite results"));
+                        assert!(instructions.contains("done"));
+                        child_calls.fetch_add(1, Ordering::SeqCst);
+                    } else if !is_root {
                         barrier.fetch_add(1, Ordering::SeqCst);
                         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
                         while barrier.load(Ordering::SeqCst) < 2 {
@@ -132,8 +138,8 @@ fn team_children_run_concurrently_before_lead_continues() {
                         }
                         child_calls.fetch_add(1, Ordering::SeqCst);
                     } else {
-                        assert_eq!(child_calls.load(Ordering::SeqCst), 2, "lead advanced before its team");
-                        for name in ["join-a", "join-b"] {
+                        assert_eq!(child_calls.load(Ordering::SeqCst), 3, "lead advanced before its team");
+                        for name in ["join-a", "join-b", "join-c"] {
                             let receipt = body["messages"].as_array().unwrap().iter().find(|m| m["tool_call_id"] == name).unwrap();
                             let receipt: serde_json::Value = serde_json::from_str(receipt["content"].as_str().unwrap()).unwrap();
                             assert_eq!(receipt["value"]["status"], "completed");
@@ -155,7 +161,8 @@ fn team_children_run_concurrently_before_lead_continues() {
     "shared_model_budget":{"group":"team-test","limit":10},
     "subagents":[
         {"name":"a","instructions":"finish","model":"a-model","endpoint":endpoint},
-        {"name":"b","instructions":"finish","model":"b-model","endpoint":endpoint}
+        {"name":"b","instructions":"finish","model":"b-model","endpoint":endpoint},
+        {"name":"c","instructions":"use prerequisites and finish","model":"c-model","endpoint":endpoint}
     ]});
     let file = tempfile::NamedTempFile::new().unwrap();
     std::fs::write(file.path(), config.to_string()).unwrap();
@@ -215,9 +222,9 @@ fn team_children_run_concurrently_before_lead_continues() {
             env.shutdown().await.unwrap();
             assert_eq!(result.unwrap().unwrap().status, RunStatus::Completed);
         });
-    assert_eq!(children_done.load(Ordering::SeqCst), 2);
+    assert_eq!(children_done.load(Ordering::SeqCst), 3);
     let children = store.children(&inspect_actor, id).unwrap();
-    assert_eq!(children.len(), 2);
+    assert_eq!(children.len(), 3);
     assert!(children
         .iter()
         .all(|child| child.status == RunStatus::Completed));

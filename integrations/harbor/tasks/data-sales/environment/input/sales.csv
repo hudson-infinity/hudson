@@ -1,0 +1,8 @@
+order_id,region,status,amount
+a,East,completed,100.10
+b,West,completed,240.25
+c,East,refund,-20.05
+a,East,completed,100.10
+d,West,cancelled,500.00
+e,East,completed,175.00
+f,West,refund,-10.25

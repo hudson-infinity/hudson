@@ -56,6 +56,9 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                 ));
             }
             definitions::validate_schema(&goal.success_schema)?;
+            for criterion in &goal.criteria {
+                criterion.validate()?;
+            }
         }
         if actor.id.trim().is_empty() || actor.workspace_id.trim().is_empty() {
             return Err(Error::Denied);
@@ -135,6 +138,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
 
     /// One bounded local step. A caller can release this Runtime while the run waits.
     pub fn tick(&mut self, actor: &Actor, id: Uuid) -> Result<RunView> {
+        self.store.prepare_run_memory(actor, id)?;
         let run = self.store.read(|d| Ok(d.run(actor, id)?.clone()))?;
         if run.status.terminal() {
             return self.store.inspect(actor, id);
@@ -144,6 +148,9 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
         }
         if run.status == RunStatus::Cancelling {
             self.finish_cancellation(actor, id)?;
+            return self.store.inspect(actor, id);
+        }
+        if !self.store.dependencies_ready(actor, id)? {
             return self.store.inspect(actor, id);
         }
         if !run.pending_operations.is_empty() {
@@ -179,7 +186,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
             self.fail(actor, id, run.revision, "harness step budget exhausted")?;
             return self.store.inspect(actor, id);
         }
-        let config = self.store.read(|d| {
+        let (config, dependency_artifacts) = self.store.read(|d| {
             let agent = &d.agents[&(actor.workspace_id.clone(), run.agent_ref.clone())];
             let mut config = crate::adapters::harness::project(agent, d)?;
             if let Some(goal) = &run.goal {
@@ -187,19 +194,45 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     "\nTask objective: {}\nFinal output must satisfy this JSON Schema: {}",
                     goal.objective, goal.success_schema
                 ));
+                if !goal.criteria.is_empty() {
+                    config.instructions.push_str(&format!(
+                        "\nAdditional success criteria: {}",
+                        serde_json::to_string(&goal.criteria)?
+                    ));
+                }
             }
-            Ok(config)
+            crate::memory::append_snapshot(d, id, &mut config.instructions)?;
+            let artifacts =
+                crate::coordination::append_dependency_context(d, id, &mut config.instructions)?;
+            Ok((config, artifacts))
         })?;
-        let transition = match self.engine.advance(&config, &run.state, input.clone()) {
+        let context_policy = self.store.read(|d| {
+            Ok(d.context_policies
+                .get(&(actor.workspace_id.clone(), run.agent_ref.clone()))
+                .cloned()
+                .flatten())
+        })?;
+        let prepared = match crate::context::advance(
+            &self.engine,
+            &config,
+            &run.state,
+            input.clone(),
+            context_policy.as_ref(),
+            &actor.workspace_id,
+            id,
+        ) {
             Ok(t) => t,
             Err(e) => {
                 self.fail(actor, id, run.revision, &e.to_string())?;
                 return self.store.inspect(actor, id);
             }
         };
+        let transition = prepared.transition;
         let committed = self.store.transact(|d| {
             let mut current = d.run(actor, id)?.clone();
             if current.revision != run.revision { return Err(Error::Conflict("stale run revision".into())); }
+            crate::context::commit(d, &prepared.artifacts)?;
+            crate::context::commit(d, &dependency_artifacts)?;
             bounded(&transition.checkpoint, current.limits.max_context_bytes)?;
             bounded(&transition.action, current.limits.max_context_bytes)?;
             let agent = d.agents[&(actor.workspace_id.clone(), current.agent_ref.clone())].clone();
@@ -276,6 +309,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     approval: None, attempts: vec![], result: None, revision: 0 });
             }
             let status = current.status;
+            crate::memory::retain_completed(d, &current)?;
             d.runs.insert(id, current);
             for operation in new_operations {
                 let operation_id = operation.meta.id;
@@ -362,10 +396,15 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     Some(Input::Tools { results })
                 }
                 OperationRequest::Verify { candidate } => match &operations[0].result {
-                    Some(OperationResult::Verify { passed, feedback }) => {
+                    Some(OperationResult::Verify {
+                        passed,
+                        feedback,
+                        evidence,
+                    }) => {
                         run.assessment = Some(Assessment {
                             passed: *passed,
                             feedback: feedback.clone(),
+                            evidence: evidence.clone(),
                         });
                         if *passed {
                             run.verified_candidate_digest = Some(definitions::digest(candidate)?);

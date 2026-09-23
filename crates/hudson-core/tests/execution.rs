@@ -68,10 +68,24 @@ fn tool_roundtrip_records_correlated_result_and_passed_assessment() {
         .unwrap();
     let view = fixtures::drive(&mut runtime, &fixtures::actor(), id).unwrap();
     assert_eq!(view.status, RunStatus::Completed);
-    assert!(view.assessment.unwrap().passed);
+    let assessment = view.assessment.unwrap();
+    assert!(assessment.passed);
+    assert_eq!(assessment.evidence.len(), 1);
     assert_eq!(calls.lock().unwrap().len(), 1);
     let ops = runtime.store.operations(&fixtures::actor(), id).unwrap();
     assert_eq!(ops.len(), 4); // Model, tool, model, deterministic verification.
+    let source = ops
+        .iter()
+        .find(|op| op.meta.id == assessment.evidence[0].operation_id)
+        .unwrap();
+    assert_eq!(assessment.evidence[0].request_digest, source.request_digest);
+    let Some(OperationResult::Tool { result }) = &source.result else {
+        panic!("tool evidence required")
+    };
+    assert_eq!(
+        assessment.evidence[0].result_digest,
+        hudson_core::definitions::digest(result).unwrap()
+    );
     assert!(ops.iter().all(|o| o.status == OperationStatus::Succeeded));
     let events = runtime.store.events(&fixtures::actor(), id, 0).unwrap();
     assert_eq!(

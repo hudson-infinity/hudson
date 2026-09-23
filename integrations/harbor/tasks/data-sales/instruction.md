@@ -1,0 +1,1 @@
+Read /app/input/sales.csv. Produce /app/report.json containing net_by_region (integer cents for each region), top_region (highest net), and excluded_rows. Exclude cancelled orders and duplicate order_id rows after their first occurrence; count each excluded row once. Refund rows are negative amounts. The source amounts are decimal dollars; calculate using exact cents.

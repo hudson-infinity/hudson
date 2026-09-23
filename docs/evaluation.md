@@ -63,3 +63,39 @@ finishes but produces an incorrect answer; the candidate passes the same case.
 It checks that expected criteria never reach the model, malformed suites fail
 before dispatch, and reports retain ordinary runtime results and usage. No model
 credentials or paid requests are used.
+
+### Value criteria and execution evidence
+
+Goals and evaluation cases optionally accept `criteria`, a list of deterministic
+checks. Supported forms are `{"type":"equals","pointer":"/answer","expected":42}`,
+`{"type":"number_range","pointer":"/score","min":0.8,"max":1.0}`, and
+`{"type":"contains","pointer":"/summary","text":"required phrase"}`. Pointers
+use JSON Pointer syntax. Missing values and wrong types fail checks.
+
+Goal criteria are visible to the agent and participate in runtime verification:
+a failure returns feedback through the normal bounded repair loop. Evaluation
+criteria remain held out, and can reject an otherwise completed run. These
+checks establish only their stated predicates, not general factual accuracy.
+
+Assessments include `evidence` references to successful recorded tool operations,
+with operation IDs and request/result digests. These provide auditable provenance;
+a successful tool execution alone does not prove that a final claim is true.
+Evaluation cases also report elapsed wall-clock milliseconds alongside the run's
+recorded usage. Timing includes waits encountered while driving that case.
+
+For checks implemented by customer tools, use `tool_result_equals`:
+
+```json
+{"type":"tool_result_equals","tool_name":"run_tests","require_latest_tool":true,"arguments":{"suite":"acceptance"},"pointer":"/passed","expected":true}
+```
+
+This requires the latest matching tool execution in this run to have succeeded
+and its recorded output to contain the expected value. A model assertion cannot
+satisfy it; a newer failed or uncertain execution prevents an older passing result
+from satisfying it. Omit `arguments` to match any arguments. The tool remains an
+ordinary authorized, budgeted operation. The tool owner must ensure that its result
+verifies the relevant artifact/version; Hudson does not infer that relationship.
+
+Set `require_latest_tool` to true when verification must follow all other tool
+work (for example, testing after file edits). Any later tool operation invalidates
+that check. It defaults to false for historical receipt checks.

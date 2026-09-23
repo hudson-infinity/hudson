@@ -39,9 +39,20 @@ pub enum WaitReason {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Evidence {
+    pub operation_id: Uuid,
+    pub tool_name: String,
+    pub request_digest: String,
+    pub result_digest: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Assessment {
     pub passed: bool,
     pub feedback: String,
+    /// Successful recorded tool executions; provenance does not establish semantic truth.
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
 }
 
 /// Immutable task objective and deterministic final-output acceptance contract.
@@ -49,6 +60,8 @@ pub struct Assessment {
 pub struct Goal {
     pub objective: String,
     pub success_schema: Value,
+    #[serde(default)]
+    pub criteria: Vec<crate::verification::Criterion>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

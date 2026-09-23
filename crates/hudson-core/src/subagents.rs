@@ -87,6 +87,33 @@ where
     )
 }
 
+/// Public deferred registration for hosts that schedule children independently.
+pub fn register_deferred_with_join<B, M, T>(
+    registry: &mut ToolRegistry,
+    child: std::sync::Arc<std::sync::Mutex<Runtime<B, M, T>>>,
+    actor: Actor,
+    agent: VersionRef,
+    name: &str,
+    description: &str,
+    policy: &str,
+) -> Result<Vec<Tool>>
+where
+    B: Backend + 'static,
+    M: ModelExecutor + 'static,
+    T: ToolExecutor + 'static,
+{
+    register_shared(
+        registry,
+        child,
+        actor,
+        agent,
+        name,
+        description,
+        policy,
+        true,
+    )
+}
+
 /// Register submission/inspection tools for a durable external scheduler.
 /// These callbacks never execute a child's model or tools themselves.
 #[allow(clippy::too_many_arguments)]
@@ -108,9 +135,16 @@ where
     let key = format!(
         "hudson.delegate.{}",
         if deferred {
-            digest(&(&actor, &agent, name, description, "temporal"))?
+            digest(&(
+                &actor,
+                &agent,
+                name,
+                description,
+                "temporal",
+                "coordination-v1",
+            ))?
         } else {
-            digest(&(&actor, &agent, name, description))?
+            digest(&(&actor, &agent, name, description, "coordination-v1"))?
         }
     );
     let (mut task_schema, default_text_task) = child
@@ -144,8 +178,8 @@ where
         version: 1,
         schema_version: SCHEMA_VERSION,
         name: name.into(),
-        description: description.into(),
-        input_schema: json!({"type":"object","properties":{"task":task_schema},"required":["task"],"additionalProperties":false}),
+        description: format!("{description} Optionally assign task_key and depends_on keys from earlier sibling submissions; submit prerequisites first within the batch. Independent tasks run concurrently with Temporal. max_model_calls can narrow the child budget. Join existing runs instead of repeating identical tasks."),
+        input_schema: json!({"type":"object","properties":{"task":task_schema,"task_key":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,128}$"},"depends_on":{"type":"array","maxItems":64,"uniqueItems":true,"items":{"type":"string","pattern":"^[A-Za-z0-9_-]{1,128}$"}},"max_model_calls":{"type":"integer","minimum":1}},"required":["task"],"additionalProperties":false}),
         output_schema: None,
         execution: Execution::Registered { key: key.clone() },
         credential_ref: None,
@@ -181,24 +215,79 @@ where
         if default_text_task && task.as_str().is_some_and(|text| text.trim().is_empty()) {
             return Err(ExecutionError::Failed("subagent task is empty".into()));
         }
-        let request_key = format!("delegate:{}", invocation.operation_id);
-        let id = child
-            .submit(actor, delegate_agent.clone(), task, Some(request_key))
-            .map_err(|_| {
-                ExecutionError::Unknown(
-                    "child submission failed; inspect persisted run before retry".into(),
-                )
-            })?;
-        if child
+        let options = crate::coordination::DelegationOptions {
+            task_key: invocation
+                .arguments
+                .get("task_key")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or_else(|| ExecutionError::Failed("invalid task key".into()))
+                })
+                .transpose()?,
+            depends_on: invocation
+                .arguments
+                .get("depends_on")
+                .map(|value| {
+                    serde_json::from_value(value.clone())
+                        .map_err(|_| ExecutionError::Failed("invalid dependencies".into()))
+                })
+                .transpose()?
+                .unwrap_or_default(),
+            max_model_calls: invocation
+                .arguments
+                .get("max_model_calls")
+                .map(|value| {
+                    value
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok())
+                        .ok_or_else(|| ExecutionError::Failed("invalid child budget".into()))
+                })
+                .transpose()?,
+        };
+        let local_parent = child
             .store
-            .link_child(actor, id, invocation.operation_id)
-            .is_err()
-        {
-            let _ = child.cancel(actor, id);
-            return Err(ExecutionError::Unknown(format!(
-                "child run {id} could not attach to an active parent"
-            )));
-        }
+            .read(|data| Ok(data.operations.contains_key(&invocation.operation_id)))
+            .map_err(|error| ExecutionError::Unknown(error.to_string()))?;
+        let id = if local_parent {
+            child
+                .submit_delegated(
+                    actor,
+                    delegate_agent.clone(),
+                    task,
+                    invocation.operation_id,
+                    options,
+                )
+                .map_err(|error| match error {
+                    crate::Error::Invalid(_) | crate::Error::Denied | crate::Error::NotFound => {
+                        ExecutionError::Failed(error.to_string())
+                    }
+                    _ => ExecutionError::Unknown(
+                        "child submission failed; inspect persisted run before retry".into(),
+                    ),
+                })?
+        } else {
+            // Preserve the library's explicit separate-store embedding mode;
+            // DAG and team limits require a shared runtime store.
+            if options != crate::coordination::DelegationOptions::default() {
+                return Err(ExecutionError::Failed(
+                    "coordination requires a shared parent store".into(),
+                ));
+            }
+            child
+                .submit(
+                    actor,
+                    delegate_agent.clone(),
+                    task,
+                    Some(format!("delegate:{}", invocation.operation_id)),
+                )
+                .map_err(|_| {
+                    ExecutionError::Unknown(
+                        "child submission failed; inspect persisted run before retry".into(),
+                    )
+                })?
+        };
         if deferred {
             inspect(&child, actor, id)
         } else {
@@ -238,7 +327,10 @@ fn drive<B: Backend, M: ModelExecutor, T: ToolExecutor>(
             .tick(actor, id)
             .map_err(|_| ExecutionError::Unknown(format!("child run {id} requires inspection")))?;
         if view.status.terminal()
-            || matches!(view.status, RunStatus::Waiting | RunStatus::Cancelling)
+            || matches!(
+                view.status,
+                RunStatus::Queued | RunStatus::Waiting | RunStatus::Cancelling
+            )
         {
             return Ok(
                 json!({"child_run":id,"status":view.status,"result":view.result,"wait":view.wait,"reason":view.reason,"usage":view.usage}),
@@ -273,7 +365,10 @@ fn inspect<B: Backend, M: ModelExecutor, T: ToolExecutor>(
         .store
         .inspect(actor, id)
         .map_err(|_| ExecutionError::Unknown(format!("cannot inspect child run {id}")))?;
+    let task = child.store.team_task(actor, id).map_err(|_| {
+        ExecutionError::Unknown(format!("cannot inspect coordination for child run {id}"))
+    })?;
     Ok(
-        json!({"child_run":id,"status":view.status,"result":view.result,"wait":view.wait,"reason":view.reason,"usage":view.usage}),
+        json!({"child_run":id,"status":view.status,"result":view.result,"wait":view.wait,"reason":view.reason,"usage":view.usage,"coordination":task}),
     )
 }

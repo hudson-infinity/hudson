@@ -18,10 +18,13 @@ pub struct Case {
     pub name: String,
     pub input: Value,
     pub expected_schema: Value,
+    #[serde(default)]
+    pub criteria: Vec<crate::verification::Criterion>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CaseResult {
+    pub elapsed_ms: u64,
     pub name: String,
     pub passed: bool,
     pub feedback: String,
@@ -48,6 +51,9 @@ pub fn validate_cases(cases: &[Case]) -> Result<()> {
             ));
         }
         definitions::validate_schema(&case.expected_schema)?;
+        for criterion in &case.criteria {
+            criterion.validate()?;
+        }
     }
     Ok(())
 }
@@ -65,6 +71,7 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
     validate_cases(cases)?;
     let mut results = Vec::with_capacity(cases.len());
     for case in cases {
+        let started = std::time::Instant::now();
         let id = runtime.submit_with_goal(
             actor,
             agent.clone(),
@@ -97,6 +104,7 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
                 break;
             }
         }
+        let source_operations = runtime.store.operations(actor, id)?;
         let assessment = if let Some(error) = error {
             Err(error)
         } else if run.status != RunStatus::Completed {
@@ -110,13 +118,23 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
         } else {
             // Some(Value::Null) is a valid final result; None is not.
             match &run.result {
-                Some(value) => {
-                    definitions::validate(&case.expected_schema, value).map_err(|e| e.to_string())
-                }
+                Some(value) => definitions::validate(&case.expected_schema, value)
+                    .map_err(|e| e.to_string())
+                    .and_then(|()| {
+                        case.criteria
+                            .iter()
+                            .position(|rule| {
+                                !rule.matches_with_operations(value, &source_operations)
+                            })
+                            .map_or(Ok(()), |i| {
+                                Err(format!("held-out criterion {} failed", i + 1))
+                            })
+                    }),
                 None => Err("completed run has no result".into()),
             }
         };
         results.push(CaseResult {
+            elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             name: case.name.clone(),
             passed: assessment.is_ok(),
             feedback: assessment

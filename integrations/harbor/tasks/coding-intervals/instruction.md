@@ -1,0 +1,1 @@
+Implement /app/intervals.py exporting merge(intervals). Input is a list of integer [start,end] pairs with start <= end. Return sorted merged pairs, including touching intervals; preserve zero-length intervals unless covered. Do not mutate input. An empty input returns []. Use only Python standard library.

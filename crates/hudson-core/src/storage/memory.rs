@@ -6,6 +6,21 @@ use uuid::Uuid;
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Data {
     #[serde(default, with = "super::pairs")]
+    pub memory_bindings: BTreeMap<(String, VersionRef), Option<crate::memory::MemoryConfig>>,
+    #[serde(default)]
+    pub memory_snapshots: BTreeMap<Uuid, Vec<crate::memory::MemoryRecord>>,
+    #[serde(default)]
+    pub team_tasks: BTreeMap<Uuid, crate::coordination::TeamTask>,
+    #[serde(default, with = "super::pairs")]
+    pub coordination_policies:
+        BTreeMap<(String, VersionRef), crate::coordination::CoordinationPolicy>,
+    #[serde(default)]
+    pub memories: BTreeMap<Uuid, crate::memory::MemoryRecord>,
+    #[serde(default)]
+    pub context_artifacts: BTreeMap<String, crate::context::ContextArtifact>,
+    #[serde(default, with = "super::pairs")]
+    pub context_policies: BTreeMap<(String, VersionRef), Option<crate::context::ContextPolicy>>,
+    #[serde(default, with = "super::pairs")]
     pub model_budgets: BTreeMap<(String, String), crate::budgets::ModelBudget>,
     #[serde(default, with = "super::pairs")]
     pub model_bindings: BTreeMap<(String, VersionRef), String>,

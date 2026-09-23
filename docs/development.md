@@ -1,6 +1,6 @@
 # Developing Hudson
 
-Hudson uses Rust 1.92.0, a committed Cargo.lock, and five Cargo crates. The default
+Hudson uses Rust 1.92.0, a committed Cargo.lock, and six Cargo crates. The default
 `AgentLoop` supports real model/tool execution, skills, goals, subagents, and
 PostgreSQL persistence. The [code structure](code-structure.md) describes ownership;
 the [implementation audit](implementation-status.md) distinguishes evidence from
@@ -59,8 +59,13 @@ a supplied task or run ID; it is not a distributed queue consumer.
 | `limits` | Partial object overriding call/operation/step/batch/context/payload defaults |
 | `input_schema` | Task JSON Schema checked before a Run can dispatch work |
 | `output_schema` | Final JSON Schema checked by runtime verification |
-| `goal` | Immutable task objective and additional success schema |
+| `goal` | Immutable objective, success schema, and optional value/verifier-tool criteria |
 | `skills`, `skill_files` | Inline or explicit Markdown instruction catalogs |
+| `skill_packages` | Portable skill directories resolved relative to the config file and frozen at load |
+| `mcp_servers` | HTTP MCP endpoints, pinned tool schemas, credential references and approval settings |
+| `context` | Optional archival thresholds; enables scoped original-output retrieval |
+| `memory` | Optional scope, recall limit, and selected output pointer for retention |
+| `coordination` | Pinned root/child delegation, repetition, model-call and step bounds |
 | `http_tools` | Versioned HTTP tool definitions and approval settings |
 | `subagents` | Nested specialist agent configurations |
 | `shared_model_budget` | Persisted group ID and model-call ceiling |
@@ -76,6 +81,10 @@ A goal looks like:
 ```json
 {"goal":{"objective":"Return a nonnegative total","success_schema":{"type":"object","properties":{"total":{"type":"number","minimum":0}},"required":["total"]}}}
 ```
+
+See [verification criteria](evaluation.md) for value checks and checks against
+recorded customer tool results. The returned assessment includes operation IDs and
+request/result digests; these are provenance, not a blanket factual guarantee.
 
 The goal is included in model instructions and verified in addition to the Agent's
 output schema. It checks final-output properties, not arbitrary real-world success.
