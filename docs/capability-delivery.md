@@ -1,36 +1,38 @@
 # Managed harness capability delivery
 
-Customers provide instructions, model selection, domain tools or MCP bindings,
-skill packages, optional memory scope, budgets, and success criteria. Hudson owns
-run execution and orchestration. Sandbox implementation and Langfuse are outside
-this delivery. In particular, no host-shell fallback is permitted.
+The customer-defined capability goal is implemented and locally verified on
+2026-09-23. Customers provide instructions, model selection, domain tools or MCP
+bindings, skill packages, memory scope, budgets, and success criteria. Hudson owns
+the execution loop and Temporal orchestration. Sandbox implementation and Langfuse
+are excluded. No host-shell fallback was added.
 
-## Acceptance matrix
+## Requirement-by-requirement evidence
 
-A module or passing unit test alone does not complete a row. Integrated behavior
-must run through normal runtime authorization and durable execution.
-
-| Requirement | Tracking | Evidence required before completion |
+| Requirement | Issue | Authoritative implementation and exercised acceptance |
 | --- | --- | --- |
-| Bounded context and original-output retrieval | #1 | Long real loop, exact archive retrieval, actor/run isolation, PostgreSQL reconnect |
-| MCP and portable skills | #2 | Actual protocol handshake/list/call through approval-aware runtime, schema drift rejection, lazy immutable package resources |
-| Scoped memory | #3 | Prior-run recall, bounded persisted snapshot, selected retention, correction/deletion, tenant isolation and restart |
-| Adaptive teams | #4 | Independent children overlap, dependencies wait, failures propagate, per-child/root budgets and repeated-task bounds |
-| Verifiable results and evaluation | #5 | Customer criteria repair loop, recorded evidence, held-out incorrect-answer rejection, coding/data/research cases, actual Harbor adapter |
-| Customer configuration and complete execution | #6 | Foreground/background Temporal runs combine all capabilities; disabled capabilities absent; customer domain example requires no custom workflow |
+| Bounded context and source retrieval | #1 | `context.rs`, harness context preparation, and `tests/context.rs`: a long actual loop completes under its request cap, reconstructs original output, preserves complete exchanges/provider metadata, rejects cross-actor/workspace/run reads, and reconnects to PostgreSQL. `tests/dependency_context.rs` additionally proves bounded prerequisite evidence, impossible-budget failure, and no artifact publication on stale/failed transitions. |
+| MCP and portable skills | #2 | `adapters/mcp.rs`, `skills.rs`, `configured.rs`, `tests/mcp.rs`, `tests/skills.rs`: real JSON/SSE MCP initialization/discovery/call, pinned schema drift rejection, approval before remote calls, unknown writes not replayed, frozen package references with UTF-8 paging and containment. Credentials stay outside model requests/results. |
+| Scoped persistent memory | #3 | `memory.rs`, `tests/memory.rs`, `tests/memory_runtime.rs`, `scripts/smoke_memory.py`: ranked bounded recall, provenance, corrections/deletion, immutable per-run snapshots, selected retention, actor validation even under permissive tool policy, PostgreSQL reconnect, and recall across separate worker processes with another scope excluded. |
+| Adaptive teams | #4 | `coordination.rs`, `subagents.rs`, `tests/coordination.rs`, `tests/dependency_context.rs`, Temporal `tests/local_server.rs`: independent children overlap, a third waits for prerequisites, results/evidence persist, failed/cancelled dependencies stop before effects, parent cancellation propagates, repeated delegation and nested/root/child budgets are bounded. |
+| Verified completion and evaluation | #5 | `verification.rs`, `dispatch.rs`, `evaluation.rs`, `tests/goals.rs`, `tests/evaluation.rs`: wrong values and unsupported claims fail; repair can complete; held-out criteria stay out of prompts; verifier-tool checks can require freshness; assessments reference recorded operation digests. `integrations/harbor` implements the actual pinned Harbor BaseAgent contract, three independently verified task types, matched-budget comparison and optional explicit-rate cost estimates. |
+| Customer configuration and complete execution | #6 | `configured.rs`, Temporal `ExecutionClient`, `tests/capabilities.rs`: one real Temporal/PostgreSQL run exercises memory, lazy skills/resources, MCP, archival/retrieval, child delegation/join, failed-then-passed verification, evidence, retention and reopen without duplicate MCP execution. Existing process tests prove foreground/background attachment. Disabled capabilities and legacy single-agent rebuild have regressions. Real-estate and Python data examples execute customer HTTP tools with no customer-written orchestration. |
 
-## Current integration notes
+## Final validation
 
-The integration branch contains configured context archival/retrieval, scoped
-memory runtime hooks, MCP and portable skill packages, durable team dependencies,
-value and verifier-tool criteria, operation evidence, a Rust execution client,
-and a Harbor adapter with coding/data/research tasks. Customer real-estate and
-data examples provide domain tools without implementing orchestration.
+- `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 python3 scripts/check.py --database hudson_harness_test_20260921 --temporal` passed after the runtime review fixes: formatting, workspace tests including opt-in PostgreSQL cases, all six real Temporal tests, strict workspace Clippy, core without default features, binary builds, six example configs, and ten CLI/API/provider/recovery smoke scripts.
+- The subsequently added `python3 scripts/smoke_real_estate.py` passed and is now included in the aggregate runner as its eleventh smoke. No Rust implementation changed after the aggregate pass.
+- Seven Harbor adapter/verifier/report tests passed against the freshly built worker and actual installed Harbor classes.
+- A final actual Harbor Docker smoke passed all three independent verifiers with no exceptions. Matched-budget comparison successfully consumed the earlier and final trial reports.
+- Independent review fixes cover memory invocation identity, bounded skill resource reads, relative Harbor package paths, atomic large dependency artifacts, terminal-root delegation, and legacy single-agent migration. The added regressions passed in the aggregate run.
 
-Review fixes are in progress for actor validation on memory tools, large skill
-resource pagination, Harbor package paths, and large prerequisite outputs. The
-combined Temporal capability test and final aggregate acceptance run are pending.
+The Temporal and Harbor models were local protocol fixtures. Harbor's Docker smoke
+deliberately uses reference-solution commands and synthetic usage counters. These
+results establish integration and verifier behavior, not model quality or superiority.
+Dollar estimates require supplied model rates and complete usage; unavailable cost
+is null, not zero. No paid provider call, production deployment, hosted multi-tenant
+service, or hosted CI result is claimed.
 
-Tests with fixture models prove lifecycle behavior, not model quality. Paid model
-benchmarking and production hosting must not be inferred from local test results.
-All issue rows remain open until their full acceptance evidence is recorded.
+The loopback HTTP development server retains its local driver. Services using
+Temporal embed the Rust execution client or use the Temporal CLI and worker.
+Harbor supplies its own execution environment; its adapter currently benchmarks
+one Hudson agent. The managed Hudson runtime separately supports configured teams.

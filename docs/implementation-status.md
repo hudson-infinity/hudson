@@ -1,8 +1,8 @@
 # Implementation audit
 
 The managed-capability extension is tracked in [capability-delivery.md](capability-delivery.md).
-Its aggregate completion audit is still pending. The historical initial-milestone
-verification below does not establish completion of that extension.
+Its requirement-by-requirement audit and local verification are complete. The
+historical initial-milestone notes below are supplemented by that current audit.
 
 Status: the requested initial agent harness is implemented and locally verified.
 The user clarified provider scope to **OpenAI, Anthropic, and Gemini for now**.
@@ -69,7 +69,7 @@ The numbered requirements below correspond to `goals.md`.
     a completed-but-wrong baseline and a passing candidate, with distinct versioned
     runs, a shared case digest, and expected criteria kept outside model context.
 
-## Latest aggregate verification
+## Earlier first-milestone verification
 
 - Review fix: continuation controls now validate the saved model-budget binding
   before accepting requests. `smoke_child_approval.py` restarts with a different
