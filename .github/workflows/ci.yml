@@ -1,0 +1,65 @@
+name: Harness checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    name: Rust, PostgreSQL, and Temporal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      RUST_BACKTRACE: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+      - name: Start isolated local PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          sudo systemctl stop postgresql
+          pg_bin="$(pg_config --bindir)"
+          "$pg_bin/initdb" -D "$RUNNER_TEMP/hudson-pg" --auth=trust
+          "$pg_bin/pg_ctl" -D "$RUNNER_TEMP/hudson-pg" -l "$RUNNER_TEMP/hudson-postgres.log" -o "-k /tmp -h ''" -w start
+          "$pg_bin/createdb" -h /tmp hudson_harness_test_20260921
+      - name: Run all local checks with durable execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check.py --database hudson_harness_test_20260921 --temporal 2>&1 | tee "$RUNNER_TEMP/hudson-check.log"
+      - name: Preserve check logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: harness-check-logs
+          path: |
+            ${{ runner.temp }}/hudson-check.log
+            ${{ runner.temp }}/hudson-postgres.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Stop isolated PostgreSQL
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/hudson-pg/postmaster.pid" ]; then
+            "$(pg_config --bindir)/pg_ctl" -D "$RUNNER_TEMP/hudson-pg" -m fast -w stop
+          fi
