@@ -34,10 +34,10 @@ cargo run -p hudson-temporal -- \
 
 `run --input-file task.json` submits structured JSON (use `-` for stdin).
 
-`run --resume <run-id>` starts or attaches to the stable workflow ID. Repeating
-submission with the same request key repairs an interruption between committing
-the run to Postgres and starting Temporal. There is not yet an automatic outbox
-repair process. The current Postgres connection uses the local `/tmp` socket.
+`run --resume <run-id>` starts or attaches to the stable workflow ID. New CLI submissions commit a scheduling request with the run. A matching worker
+retries pending requests every five seconds, recovering an interruption between
+the Postgres commit and Temporal start without resubmission. Repeating the same
+request key remains safe and must retain the original scheduling target. The current Postgres connection uses the local `/tmp` socket.
 
 Use the existing worker control commands to approve operations, answer questions,
 cancel runs, and reconcile unknown outcomes in the same database/namespace.
@@ -88,8 +88,10 @@ runs `RunActivities` from that same configured tree.
 
 Construct the client with the official Temporal `Client`, Hudson storage namespace,
 and worker task queue. A repeated start attaches to the stable workflow identity;
-completed workflows are never executed again. Repeating submission with the same
-request key repairs the storage-to-Temporal submission gap. An application exposing
+completed workflows are never executed again. For automatic recovery, use core `submit_scheduled` with
+`ExecutionClient::schedule_target(namespace, task_queue)` and run a `SchedulingPump`
+with the worker. Ordinary core submissions are never implicitly adopted. A
+scheduling acknowledgement records Temporal acceptance, not task completion. An application exposing
 this SDK over a network must authenticate its own callers and supply their trusted
 workspace/actor identity; the existing loopback HTTP development server still uses
 its local driver and does not schedule Temporal runs.

@@ -1,6 +1,8 @@
 //! Temporal schedules the existing Hudson runtime; workflows never perform effects.
 pub mod client;
+pub mod scheduling;
 pub use client::{ExecutionClient, RunReceipt};
+pub use scheduling::SchedulingPump;
 
 use hudson_core::{
     configured::ScheduledTree,

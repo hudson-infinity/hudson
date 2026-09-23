@@ -20,6 +20,19 @@ pub struct ExecutionClient {
     task_queue: String,
 }
 impl ExecutionClient {
+    pub fn schedule_target(
+        namespace: &str,
+        task_queue: &str,
+    ) -> hudson_core::scheduling::ScheduleTarget {
+        hudson_core::scheduling::ScheduleTarget {
+            scheduler: format!("temporal:{namespace}"),
+            task_queue: task_queue.into(),
+        }
+    }
+    pub fn target(&self) -> hudson_core::scheduling::ScheduleTarget {
+        Self::schedule_target(&self.namespace, &self.task_queue)
+    }
+
     /// `namespace` is the Hudson PostgreSQL namespace, not the Temporal namespace
     /// (which belongs to the supplied Temporal client). Workers must match it.
     pub fn new(
