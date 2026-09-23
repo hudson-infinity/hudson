@@ -278,6 +278,18 @@ pub fn register_tools(
         let scope = scope.clone();
         registry.register(key, move |call| {
             let execute = || -> Result<serde_json::Value> {
+                // The captured scope is private to its configured actor, even if
+                // an administrator grants this tool policy to additional actors.
+                store.read(|data| {
+                    let operation = data.operations.get(&call.operation_id).ok_or(Error::NotFound)?;
+                    data.run(&actor, operation.run_id)?;
+                    if operation.status != OperationStatus::Running
+                        || !matches!(&operation.request, OperationRequest::Tool {tool_ref, call: recorded}
+                            if *tool_ref == call.tool.reference() && recorded.arguments == *call.arguments) {
+                        return Err(Error::Denied);
+                    }
+                    Ok(())
+                })?;
                 match name {
                     "recall_memory" => Ok(json!(store.recall_memory(
                         &actor,

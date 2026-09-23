@@ -113,3 +113,5 @@ Replace the example endpoint and schemas with those discovered from your actual
 server, set `CUSTOMER_MCP_TOKEN` and your configured provider credential, then run
 the example through the existing worker or Temporal frontend. Disabling MCP or
 portable packages is simply omitting their fields or configuring empty lists.
+
+Portable resources larger than 8 KiB are returned in UTF-8-safe pages by `load_skill`. Supply `resource` and follow `next_offset` using the optional `offset` argument until it is null; concatenate `contents` exactly. Pages are bounded even for JSON-escaped text, so accepted 128 KiB resources remain readable under the default execution payload budget. Small resources retain their original response shape.

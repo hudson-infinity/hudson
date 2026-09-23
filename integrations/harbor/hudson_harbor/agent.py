@@ -110,6 +110,8 @@ class HudsonAgent(BaseAgent):
             "or verifier artifacts. Report what you changed; do not claim success without evidence.")
         for skill in config.get("skill_files", []):
             skill["path"] = str((self.config_path.parent / skill["path"]).resolve())
+        config["skill_packages"] = [str((self.config_path.parent / path).resolve())
+                                    for path in config.get("skill_packages", [])]
         # Enforce identical budgets across compared configurations.
         config["max_output_tokens"] = self.max_output_tokens
         config["limits"] = {"max_model_calls": self.max_model_calls,

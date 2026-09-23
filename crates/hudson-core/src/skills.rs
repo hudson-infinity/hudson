@@ -284,6 +284,7 @@ impl SkillCatalog {
         let mut input_schema = json!({"type":"object","properties":{"name":{"type":"string","enum":names}},"required":["name"],"additionalProperties":false});
         if !self.resources.is_empty() {
             input_schema["properties"]["resource"] = json!({"type":"string","description":"Optional relative resource path listed by load_skill"});
+            input_schema["properties"]["offset"] = json!({"type":"integer","minimum":0,"description":"UTF-8 byte offset for a resource page; follow next_offset until null"});
         }
         let tool = Tool {
             id:key.clone(), workspace_id:workspace.into(), version:1, schema_version:SCHEMA_VERSION,
@@ -306,7 +307,18 @@ impl SkillCatalog {
             let resources = self.resources.get(&skill.name);
             if let Some(path) = call.arguments.get("resource").and_then(|value| value.as_str()) {
                 let contents = resources.and_then(|entries| entries.get(path)).ok_or_else(|| ExecutionError::Failed("resource not found in frozen skill package".into()))?;
-                return Ok(json!({"name":skill.name,"resource":path,"contents":contents}));
+                let offset = call.arguments.get("offset").map(|value| value.as_u64().and_then(|n|usize::try_from(n).ok()).ok_or_else(||ExecutionError::Failed("invalid skill resource offset".into()))).transpose()?.unwrap_or(0);
+                if offset > contents.len() || !contents.is_char_boundary(offset) {
+                    return Err(ExecutionError::Failed("invalid skill resource byte offset".into()));
+                }
+                // Bound serialized pages even for escape-heavy text (JSON may
+                // expand each input byte sixfold). Small responses stay compatible.
+                let mut end = (offset + 8192).min(contents.len());
+                while !contents.is_char_boundary(end) { end -= 1; }
+                if offset == 0 && end == contents.len() && call.arguments.get("offset").is_none() {
+                    return Ok(json!({"name":skill.name,"resource":path,"contents":contents}));
+                }
+                return Ok(json!({"name":skill.name,"resource":path,"contents":&contents[offset..end],"offset":offset,"next_offset":if end<contents.len(){Some(end)}else{None},"total_bytes":contents.len()}));
             }
             Ok(json!({"name":skill.name,"instructions":skill.instructions,"resources":resources.map(|entries| entries.keys().collect::<Vec<_>>()).unwrap_or_default()}))
         })?;

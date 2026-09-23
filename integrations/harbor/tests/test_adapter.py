@@ -38,8 +38,11 @@ class AdapterTest(unittest.IsolatedAsyncioTestCase):
         try:
             with tempfile.TemporaryDirectory() as directory:
                 directory = Path(directory)
+                package = directory / "analysis"
+                package.mkdir()
+                (package / "SKILL.md").write_text("---\nname: analysis\ndescription: Analyze evidence\n---\nCheck the evidence before finishing.")
                 config = directory / "agent.json"
-                config.write_text(json.dumps({"name": "fixture", "model": "fixture", "provider": "openai", "instructions": "Complete the task.", "endpoint": f"http://127.0.0.1:{runner.addresses[0][1]}/chat/completions"}))
+                config.write_text(json.dumps({"name": "fixture", "model": "fixture", "provider": "openai", "skill_packages": ["analysis"], "instructions": "Complete the task.", "endpoint": f"http://127.0.0.1:{runner.addresses[0][1]}/chat/completions"}))
                 agent = HudsonAgent(logs_dir=directory / "logs", config_path=str(config), worker_path=worker)
                 self.assertIsInstance(agent, BaseAgent)
                 environment = create_autospec(BaseEnvironment, instance=True)
@@ -54,6 +57,8 @@ class AdapterTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(context.metadata["hudson"]["status"], "completed")
                 self.assertEqual(context.metadata["hudson"]["tool_executions"], 1)
                 self.assertTrue((directory / "logs/hudson-run.json").exists())
+                rewritten = json.loads((directory / "logs/hudson-config.json").read_text())
+                self.assertEqual(rewritten["skill_packages"], [str(package.resolve())])
         finally:
             await runner.cleanup()
 

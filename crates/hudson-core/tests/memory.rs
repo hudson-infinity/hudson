@@ -143,7 +143,7 @@ fn memory_survives_postgres_reopen() {
 }
 
 #[test]
-fn registered_tools_keep_write_policy_and_idempotency() {
+fn registered_tools_keep_write_policy_and_reject_unadmitted_invocations() {
     use hudson_core::{
         adapters::tools::{Invocation, ToolExecutor, ToolRegistry},
         models::Effect,
@@ -166,21 +166,20 @@ fn registered_tools_keep_write_policy_and_idempotency() {
     let op = uuid::Uuid::new_v4();
     let input = serde_json::to_value(fact("Austin warehouse budget")).unwrap();
     let invoke = |registry: &mut ToolRegistry| {
-        registry
-            .execute(Invocation {
-                operation_id: op,
-                tool: &tools[1],
-                arguments: &input,
-            })
-            .unwrap()
+        registry.execute(Invocation {
+            operation_id: op,
+            tool: &tools[1],
+            arguments: &input,
+        })
     };
-    assert_eq!(invoke(&mut registry), invoke(&mut registry));
+    assert!(invoke(&mut registry).is_err());
+    assert!(invoke(&mut registry).is_err());
     assert_eq!(
         store
             .recall_memory(&actor(), &scope(), "warehouse", 20)
             .unwrap()
             .len(),
-        1
+        0
     );
 }
 

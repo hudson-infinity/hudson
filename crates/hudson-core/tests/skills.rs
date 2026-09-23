@@ -130,3 +130,45 @@ fn portable_packages_freeze_lazy_resources_and_reject_traversal() {
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn portable_resources_are_bounded_utf8_pages_with_exact_reassembly() {
+    use hudson_core::skills::SkillPackage;
+    let directory = std::env::temp_dir().join(format!("hudson-paging-{}", uuid::Uuid::new_v4()));
+    let package = directory.join("large-resource");
+    std::fs::create_dir_all(package.join("references")).unwrap();
+    std::fs::write(
+        package.join("SKILL.md"),
+        "---\nname: large-resource\ndescription: Large resource\n---\nRead the references.",
+    )
+    .unwrap();
+    let original = "多字\n\u{0001}".repeat(12000);
+    assert!(original.len() <= 131072);
+    std::fs::write(package.join("references/data.txt"), &original).unwrap();
+    let mut registry = ToolRegistry::new();
+    let tool = SkillCatalog::with_packages(vec![], vec![SkillPackage::load(&package).unwrap()])
+        .unwrap()
+        .register(&mut registry, "workspace", "read")
+        .unwrap();
+    let mut joined = String::new();
+    let mut offset = 0;
+    loop {
+        let value=registry.execute(Invocation{operation_id:uuid::Uuid::new_v4(),tool:&tool,arguments:&json!({"name":"large-resource","resource":"references/data.txt","offset":offset})}).unwrap();
+        assert!(serde_json::to_vec(&value).unwrap().len() < 65536);
+        joined.push_str(value["contents"].as_str().unwrap());
+        let Some(next) = value["next_offset"].as_u64() else {
+            break;
+        };
+        assert!(next > offset);
+        offset = next;
+    }
+    assert_eq!(joined, original);
+    assert!(registry
+        .execute(Invocation {
+            operation_id: uuid::Uuid::new_v4(),
+            tool: &tool,
+            arguments: &json!({"name":"large-resource","resource":"references/data.txt","offset":1})
+        })
+        .is_err());
+    std::fs::remove_dir_all(directory).unwrap();
+}

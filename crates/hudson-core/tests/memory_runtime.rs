@@ -300,3 +300,152 @@ fn recall_snapshot_is_stable_when_memory_changes_during_run() {
     let requests = store.operations(&actor, next).unwrap();
     assert!(requests.iter().any(|op|matches!(&op.request,OperationRequest::Model{request} if request.instructions.contains("four million")&&!request.instructions.contains("three million"))));
 }
+
+#[test]
+fn shared_policy_cannot_expose_registration_actors_private_memory() {
+    use hudson_core::security::Policy;
+    use hudson_harness::ToolCall;
+    struct Repeat(ToolRegistry);
+    impl hudson_core::adapters::tools::ToolExecutor for Repeat {
+        fn execute(
+            &mut self,
+            call: hudson_core::adapters::tools::Invocation<'_>,
+        ) -> Result<serde_json::Value, ExecutionError> {
+            use hudson_core::adapters::tools::Invocation;
+            let first = self.0.execute(Invocation {
+                operation_id: call.operation_id,
+                tool: call.tool,
+                arguments: call.arguments,
+            });
+            let repeated = self.0.execute(Invocation {
+                operation_id: call.operation_id,
+                tool: call.tool,
+                arguments: call.arguments,
+            });
+            assert_eq!(first.is_ok(), repeated.is_ok());
+            if let (Ok(a), Ok(b)) = (&first, &repeated) {
+                assert_eq!(a, b);
+            }
+            let changed = json!({"query":"different","limit":5});
+            assert!(self
+                .0
+                .execute(Invocation {
+                    operation_id: call.operation_id,
+                    tool: call.tool,
+                    arguments: &changed
+                })
+                .is_err());
+            first
+        }
+    }
+    struct Recall(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl ModelExecutor for Recall {
+        fn call(&mut self, _: &ModelRequest) -> Result<ModelResponse, ExecutionError> {
+            if self.0.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                Ok(ModelResponse::Final {
+                    output: json!("finished"),
+                })
+            } else {
+                Ok(ModelResponse::ToolCalls {
+                    calls: vec![ToolCall {
+                        call_id: "recall".into(),
+                        name: "recall_memory".into(),
+                        arguments: json!({"query":"private","limit":5}),
+                        provider_metadata: serde_json::Value::Null,
+                    }],
+                })
+            }
+        }
+    }
+    let store = Store::default();
+    let alice = fixtures::actor();
+    let bob = Actor {
+        id: "bob".into(),
+        workspace_id: alice.workspace_id.clone(),
+    };
+    let scope = MemoryScope {
+        name: "private".into(),
+    };
+    store
+        .retain_memory(
+            &alice,
+            &scope,
+            "secret",
+            RetainMemory {
+                text: "private confidential acquisition".into(),
+                kind: MemoryKind::UserFact,
+                sources: vec![MemorySource {
+                    reference: "user".into(),
+                    run_id: None,
+                    operation_id: None,
+                }],
+                supersedes: None,
+            },
+        )
+        .unwrap();
+    let mut registry = ToolRegistry::new();
+    let tools = register_tools(
+        &mut registry,
+        store.clone(),
+        alice.clone(),
+        scope,
+        "shared",
+        "shared",
+    )
+    .unwrap();
+    let (mut agent, _) = fixtures::definitions();
+    agent.tools = tools
+        .iter()
+        .map(|t| AgentTool {
+            tool_ref: t.reference(),
+            alias: t.name.clone(),
+        })
+        .collect();
+    agent.input_schema = None;
+    agent.output_schema = None;
+    for tool in tools {
+        store.publish_tool(tool).unwrap();
+    }
+    store.publish_agent(agent).unwrap();
+    store
+        .set_policy(
+            &alice.workspace_id,
+            "shared",
+            Policy {
+                actors: [alice.id.clone(), bob.id.clone()].into(),
+                approvers: Default::default(),
+                require_approval: false,
+            },
+        )
+        .unwrap();
+    let phase = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut runtime = Runtime::new(
+        store.clone(),
+        AgentLoop,
+        Recall(phase.clone()),
+        Repeat(registry),
+    );
+    let own = runtime
+        .submit(&alice, fixtures::agent_ref(), json!("recall"), None)
+        .unwrap();
+    fixtures::drive(&mut runtime, &alice, own).unwrap();
+    assert!(
+        serde_json::to_string(&store.operations(&alice, own).unwrap())
+            .unwrap()
+            .contains("confidential acquisition")
+    );
+    phase.store(false, std::sync::atomic::Ordering::SeqCst);
+    let id = runtime
+        .submit(&bob, fixtures::agent_ref(), json!("recall"), None)
+        .unwrap();
+    fixtures::drive(&mut runtime, &bob, id).unwrap();
+    let ops = store.operations(&bob, id).unwrap();
+    let op = ops
+        .iter()
+        .find(|o| matches!(o.request, OperationRequest::Tool { .. }))
+        .unwrap();
+    assert_eq!(op.status, OperationStatus::Failed);
+    assert!(!serde_json::to_string(&ops)
+        .unwrap()
+        .contains("confidential acquisition"));
+}
