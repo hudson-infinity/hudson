@@ -170,6 +170,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                         run.goal.clone(),
                     ))
                 })?;
+                let source_operations = self.store.operations(actor, run_id)?;
                 let mut assessment = crate::verification::check(schema.as_ref(), candidate);
                 if assessment.passed {
                     if let Some(goal) = goal {
@@ -182,11 +183,9 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                         }
                         .into();
                         if assessment.passed {
-                            if let Some(index) = goal
-                                .criteria
-                                .iter()
-                                .position(|rule| !rule.matches(candidate))
-                            {
+                            if let Some(index) = goal.criteria.iter().position(|rule| {
+                                !rule.matches_with_operations(candidate, &source_operations)
+                            }) {
                                 assessment.passed = false;
                                 assessment.feedback =
                                     format!("success criterion {} failed", index + 1);
@@ -195,7 +194,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     }
                 }
                 let mut evidence = Vec::new();
-                for operation in self.store.operations(actor, run_id)? {
+                for operation in source_operations {
                     if operation.status != OperationStatus::Succeeded {
                         continue;
                     }

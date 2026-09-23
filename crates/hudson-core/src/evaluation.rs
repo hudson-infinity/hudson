@@ -104,6 +104,7 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
                 break;
             }
         }
+        let source_operations = runtime.store.operations(actor, id)?;
         let assessment = if let Some(error) = error {
             Err(error)
         } else if run.status != RunStatus::Completed {
@@ -122,7 +123,9 @@ pub fn evaluate<B: Backend, M: ModelExecutor, T: ToolExecutor>(
                     .and_then(|()| {
                         case.criteria
                             .iter()
-                            .position(|rule| !rule.matches(value))
+                            .position(|rule| {
+                                !rule.matches_with_operations(value, &source_operations)
+                            })
                             .map_or(Ok(()), |i| {
                                 Err(format!("held-out criterion {} failed", i + 1))
                             })

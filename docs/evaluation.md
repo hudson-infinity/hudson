@@ -82,3 +82,16 @@ with operation IDs and request/result digests. These provide auditable provenanc
 a successful tool execution alone does not prove that a final claim is true.
 Evaluation cases also report elapsed wall-clock milliseconds alongside the run's
 recorded usage. Timing includes waits encountered while driving that case.
+
+For checks implemented by customer tools, use `tool_result_equals`:
+
+```json
+{"type":"tool_result_equals","tool_name":"run_tests","arguments":{"suite":"acceptance"},"pointer":"/passed","expected":true}
+```
+
+This requires the latest matching tool execution in this run to have succeeded
+and its recorded output to contain the expected value. A model assertion cannot
+satisfy it; a newer failed or uncertain execution prevents an older passing result
+from satisfying it. Omit `arguments` to match any arguments. The tool remains an
+ordinary authorized, budgeted operation. The tool owner must ensure that its result
+verifies the relevant artifact/version; Hudson does not infer that relationship.

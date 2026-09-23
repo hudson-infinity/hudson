@@ -38,7 +38,7 @@ impl ModelExecutor for NoModel {
 type Control = Runtime<AgentLoop, NoModel, ToolRegistry>;
 enum Driver {
     Demo(DemoRuntime),
-    Configured(ConfiguredTree),
+    Configured(Box<ConfiguredTree>),
 }
 impl Driver {
     fn tick(&mut self, actor: &Actor, id: Uuid) -> Result<RunView, Error> {
@@ -378,7 +378,7 @@ pub fn configured(tree: ConfiguredTree, actor: Actor, durable: bool) -> Router {
     let agent = tree.reference.clone();
     let goal = tree.goal.clone();
     assemble(
-        Driver::Configured(tree),
+        Driver::Configured(Box::new(tree)),
         store,
         actor,
         agent,

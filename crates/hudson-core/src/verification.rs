@@ -7,15 +7,43 @@ use serde_json::Value;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Criterion {
-    Equals { pointer: String, expected: Value },
-    NumberRange { pointer: String, min: f64, max: f64 },
-    Contains { pointer: String, text: String },
+    Equals {
+        pointer: String,
+        expected: Value,
+    },
+    NumberRange {
+        pointer: String,
+        min: f64,
+        max: f64,
+    },
+    Contains {
+        pointer: String,
+        text: String,
+    },
+    /// Require the latest matching recorded tool execution to pass a customer check.
+    ToolResultEquals {
+        tool_name: String,
+        #[serde(default)]
+        arguments: Option<Value>,
+        pointer: String,
+        expected: Value,
+    },
 }
 
 impl Criterion {
     pub fn validate(&self) -> crate::Result<()> {
         let pointer = match self {
             Self::Equals { pointer, .. } | Self::Contains { pointer, .. } => pointer,
+            Self::ToolResultEquals {
+                tool_name, pointer, ..
+            } => {
+                if tool_name.trim().is_empty() || tool_name.len() > 256 {
+                    return Err(crate::Error::Invalid(
+                        "verification tool name is invalid".into(),
+                    ));
+                }
+                pointer
+            }
             Self::NumberRange { pointer, min, max } => {
                 if !min.is_finite() || !max.is_finite() || min > max {
                     return Err(crate::Error::Invalid(
@@ -39,11 +67,41 @@ impl Criterion {
         Ok(())
     }
 
+    pub fn matches_with_operations(
+        &self,
+        candidate: &Value,
+        operations: &[crate::models::Operation],
+    ) -> bool {
+        use crate::models::{OperationRequest, OperationResult, OperationStatus};
+        let Self::ToolResultEquals {
+            tool_name,
+            arguments,
+            pointer,
+            expected,
+        } = self
+        else {
+            return self.matches(candidate);
+        };
+        if self.validate().is_err() {
+            return false;
+        }
+        let latest = operations.iter().filter(|operation| {
+            matches!(&operation.request, OperationRequest::Tool { call, .. }
+                if &call.name == tool_name && arguments.as_ref().is_none_or(|args| args == &call.arguments))
+        }).max_by_key(|operation| (operation.step_index, operation.request_index));
+        latest.is_some_and(|operation| {
+            operation.status == OperationStatus::Succeeded && matches!(&operation.result,
+                Some(OperationResult::Tool { result }) if matches!(&result.outcome,
+                    hudson_harness::ToolOutcome::Success { value } if value.pointer(pointer) == Some(expected)))
+        })
+    }
+
     pub fn matches(&self, candidate: &Value) -> bool {
         if self.validate().is_err() {
             return false;
         }
         match self {
+            Self::ToolResultEquals { .. } => false,
             Self::Equals { pointer, expected } => candidate.pointer(pointer) == Some(expected),
             Self::NumberRange { pointer, min, max } => candidate
                 .pointer(pointer)

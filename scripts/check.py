@@ -9,7 +9,8 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOCAL_SMOKES = ('providers', 'subagents', 'evaluation', 'python_tool')
 DATABASE_SMOKES = ('approval', 'api', 'recovery', 'child_approval', 'user_input')
-CONFIGS = ('analyst.json', 'data-agent.json', 'team.json', 'python-tool/agent.json')
+CONFIGS = ('analyst.json', 'data-agent.json', 'team.json', 'python-tool/agent.json',
+           'customer-mcp.json', 'real-estate/agent.json')
 
 
 def main():

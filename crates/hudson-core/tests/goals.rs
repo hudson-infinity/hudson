@@ -69,3 +69,76 @@ fn goal_contract_is_persisted_and_enforced() {
         assert_eq!(view.assessment.unwrap().passed, expected == 42);
     }
 }
+
+#[test]
+fn completion_requires_recorded_tool_check_and_repairs_unsupported_claim() {
+    use hudson_core::verification::Criterion;
+    struct CheckModel(usize);
+    impl ModelExecutor for CheckModel {
+        fn call(&mut self, request: &ModelRequest) -> Result<ModelResponse, ExecutionError> {
+            self.0 += 1;
+            if self.0 == 2 {
+                assert!(serde_json::to_string(request)
+                    .unwrap()
+                    .contains("success criterion 1 failed"));
+                return Ok(ModelResponse::ToolCalls {
+                    calls: vec![hudson_harness::ToolCall {
+                        provider_metadata: serde_json::Value::Null,
+                        call_id: "verify-shipment".into(),
+                        name: "lookup_order".into(),
+                        arguments: json!({"order_id":"123"}),
+                    }],
+                });
+            }
+            Ok(ModelResponse::Final {
+                output: json!({"message":"shipped"}),
+            })
+        }
+    }
+    let actor = fixtures::actor();
+    let mut runtime = Runtime::new(
+        fixtures::store().unwrap(),
+        AgentLoop,
+        CheckModel(0),
+        fixtures::FixtureTools::default(),
+    );
+    let criterion = Criterion::ToolResultEquals {
+        tool_name: "lookup_order".into(),
+        arguments: Some(json!({"order_id":"123"})),
+        pointer: "/status".into(),
+        expected: json!("shipped"),
+    };
+    assert!(!criterion.matches(&json!({"status":"shipped"})));
+    let id = runtime
+        .submit_with_goal(
+            &actor,
+            fixtures::agent_ref(),
+            json!({"order_id":"123","action":"lookup"}),
+            None,
+            Some(Goal {
+                objective: "Check shipment".into(),
+                success_schema: json!({}),
+                criteria: vec![criterion.clone()],
+            }),
+        )
+        .unwrap();
+    let view = fixtures::drive(&mut runtime, &actor, id).unwrap();
+    assert_eq!(view.status, RunStatus::Completed);
+    assert_eq!(view.usage.model_calls, 3);
+    assert_eq!(view.assessment.unwrap().evidence.len(), 1);
+    let mut operations = runtime.store.operations(&actor, id).unwrap();
+    assert!(criterion.matches_with_operations(&json!(null), &operations));
+    let mut latest = operations
+        .iter()
+        .find(|o| matches!(o.request, OperationRequest::Tool { .. }))
+        .unwrap()
+        .clone();
+    latest.step_index += 10;
+    latest.status = OperationStatus::Failed;
+    latest.result = None;
+    operations.push(latest);
+    assert!(
+        !criterion.matches_with_operations(&json!(null), &operations),
+        "an older passing check cannot hide a newer failure"
+    );
+}
