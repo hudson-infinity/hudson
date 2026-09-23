@@ -6,6 +6,12 @@ use hudson_core::{
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
+#[derive(Debug, Default)]
+pub struct PublicationReport {
+    pub published: usize,
+    pub deferred: Vec<(uuid::Uuid, String)>,
+}
+
 pub struct SchedulingPump {
     store: Option<Store>,
     actor: Actor,
@@ -25,8 +31,11 @@ impl SchedulingPump {
             target,
         }
     }
-    /// Returns the number accepted by Temporal. Failed publication remains pending.
-    pub async fn publish_pending(&self, execution: &ExecutionClient) -> Result<usize, Error> {
+    /// Failed requests remain pending without preventing other requests from starting.
+    pub async fn publish_pending(
+        &self,
+        execution: &ExecutionClient,
+    ) -> Result<PublicationReport, Error> {
         if self.target != execution.target() {
             return Err("scheduler target mismatch".into());
         }
@@ -38,27 +47,36 @@ impl SchedulingPump {
             store.pending_schedules(&actor, &agent, &target, 100)
         })
         .await??;
-        let mut published = 0;
+        let mut report = PublicationReport::default();
         for id in ids {
-            let store = self.store.as_ref().expect("live scheduling pump").clone();
-            let actor = self.actor.clone();
-            let agent = self.agent.clone();
-            let goal = self.goal.clone();
-            let budget = self.budget.clone();
-            tokio::task::spawn_blocking(move || {
-                store.validate_resume(&actor, id, &agent, &goal)?;
-                store.validate_model_budget(&actor, id, &budget)
-            })
-            .await??;
-            execution.start(id).await?;
-            let store = self.store.as_ref().expect("live scheduling pump").clone();
-            let actor = self.actor.clone();
-            let target = self.target.clone();
-            tokio::task::spawn_blocking(move || store.acknowledge_schedule(&actor, id, &target))
-                .await??;
-            published += 1;
+            match self.publish_one(execution, id).await {
+                Ok(()) => report.published += 1,
+                Err(error) => report.deferred.push((id, error.to_string())),
+            }
         }
-        Ok(published)
+        Ok(report)
+    }
+
+    async fn publish_one(&self, execution: &ExecutionClient, id: uuid::Uuid) -> Result<(), Error> {
+        let store = self.store.as_ref().expect("live scheduling pump").clone();
+        let actor = self.actor.clone();
+        let agent = self.agent.clone();
+        let goal = self.goal.clone();
+        let budget = self.budget.clone();
+        let target = self.target.clone();
+        tokio::task::spawn_blocking(move || {
+            store.record_schedule_attempt(&actor, id, &target)?;
+            store.validate_resume(&actor, id, &agent, &goal)?;
+            store.validate_model_budget(&actor, id, &budget)
+        })
+        .await??;
+        execution.start(id).await?;
+        let store = self.store.as_ref().expect("live scheduling pump").clone();
+        let actor = self.actor.clone();
+        let target = self.target.clone();
+        tokio::task::spawn_blocking(move || store.acknowledge_schedule(&actor, id, &target))
+            .await??;
+        Ok(())
     }
 }
 impl Drop for SchedulingPump {

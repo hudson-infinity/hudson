@@ -113,8 +113,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut worker = Worker::new(&runtime, client, options)?;
                 let publisher = async {
                     loop {
-                        if let Err(error) = pump.publish_pending(&execution).await {
-                            eprintln!("Scheduling publication deferred: {error}");
+                        match pump.publish_pending(&execution).await {
+                            Ok(report) => {
+                                for (id, error) in report.deferred {
+                                    eprintln!("Scheduling {id} deferred: {error}");
+                                }
+                            }
+                            Err(error) => eprintln!("Scheduling scan deferred: {error}"),
                         }
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }

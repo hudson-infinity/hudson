@@ -101,3 +101,53 @@ fn invalid_submissions_and_ordinary_runs_never_enter_scheduler_queue() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn attempted_requests_cannot_starve_untouched_work() {
+    let runtime = fixtures::runtime().unwrap();
+    let actor = fixtures::actor();
+    let target = ScheduleTarget {
+        scheduler: "temporal:local".into(),
+        task_queue: "agents".into(),
+    };
+    for _ in 0..101 {
+        runtime
+            .submit_scheduled(
+                &actor,
+                fixtures::agent_ref(),
+                json!({"order_id":"123","action":"lookup"}),
+                None,
+                None,
+                Some(target.clone()),
+            )
+            .unwrap();
+    }
+    let pending = || {
+        runtime
+            .store
+            .pending_schedules(&actor, &fixtures::agent_ref(), &target, 100)
+            .unwrap()
+    };
+    let first = pending();
+    assert_eq!(first.len(), 100);
+    let stranger = Actor {
+        id: "stranger".into(),
+        ..actor.clone()
+    };
+    assert!(runtime
+        .store
+        .record_schedule_attempt(&stranger, first[0], &target)
+        .is_err());
+    for id in &first {
+        runtime
+            .store
+            .record_schedule_attempt(&actor, *id, &target)
+            .unwrap();
+    }
+    let next = pending();
+    assert!(
+        !first.contains(&next[0]),
+        "untouched request must lead the next batch"
+    );
+    assert_eq!(next.len(), 100, "failed attempts must remain eligible");
+}

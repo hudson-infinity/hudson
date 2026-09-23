@@ -145,6 +145,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                     crate::scheduling::ScheduleRequest {
                         target,
                         acknowledged: false,
+                        last_attempt: 0,
                     },
                 );
             }

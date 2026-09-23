@@ -25,6 +25,8 @@ impl ScheduleTarget {
 pub(crate) struct ScheduleRequest {
     pub target: ScheduleTarget,
     pub acknowledged: bool,
+    #[serde(default)]
+    pub last_attempt: u64,
 }
 impl Store {
     /// Return only explicitly scheduled roots owned by this actor and agent.
@@ -54,13 +56,35 @@ impl Store {
                     && run.parent_operation.is_none()
                     && !run.status.terminal()
                 {
-                    pending.push((run.meta.created_at, *id));
+                    pending.push((request.last_attempt, run.meta.created_at, *id));
                 }
             }
             pending.sort_unstable();
-            Ok(pending.into_iter().take(limit).map(|(_, id)| id).collect())
+            Ok(pending
+                .into_iter()
+                .take(limit)
+                .map(|(_, _, id)| id)
+                .collect())
         })
     }
+    /// Rotate attempted requests behind untouched work, including invalid requests.
+    pub fn record_schedule_attempt(
+        &self,
+        actor: &Actor,
+        id: Uuid,
+        target: &ScheduleTarget,
+    ) -> Result<()> {
+        self.transact(|data| {
+            data.run(actor, id)?;
+            let request = data.schedule_requests.get_mut(&id).ok_or(Error::NotFound)?;
+            if &request.target != target {
+                return Err(Error::Conflict("scheduling target changed".into()));
+            }
+            request.last_attempt = now();
+            Ok(())
+        })
+    }
+
     /// Trusted scheduler receipt, never exposed as a model tool.
     pub fn acknowledge_schedule(
         &self,
