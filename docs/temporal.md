@@ -76,3 +76,20 @@ joined results, foreground/background CLI processes, request-key deduplication,
 a question resumed from PostgreSQL after a worker restart, approval enforcement,
 and SIGKILL during a write followed by a Temporal retry and receipt reconciliation.
 No hosted deployment or paid provider calls are part of these checks.
+
+## Embedding execution in a Rust service
+
+`hudson_temporal::ExecutionClient` exposes the same start/attach and result logic
+used by the CLI. Build a configured tree and submit with its core runtime to pin
+instructions, tools, goal, and budget, then call `execution.start(run_id).await`
+to obtain a serializable `RunReceipt`. Return that receipt for background work,
+or call `execution.result(run_id).await` for foreground work. A separate worker
+runs `RunActivities` from that same configured tree.
+
+Construct the client with the official Temporal `Client`, Hudson storage namespace,
+and worker task queue. A repeated start attaches to the stable workflow identity;
+completed workflows are never executed again. Repeating submission with the same
+request key repairs the storage-to-Temporal submission gap. An application exposing
+this SDK over a network must authenticate its own callers and supply their trusted
+workspace/actor identity; the existing loopback HTTP development server still uses
+its local driver and does not schedule Temporal runs.

@@ -4,8 +4,6 @@ use hudson_temporal::{RunActivities, RunWorkflow};
 use std::path::PathBuf;
 use temporalio_client::{
     envconfig::LoadClientConfigProfileOptions, Client, ClientOptions, Connection,
-    WorkflowGetResultOptions, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
-    WorkflowStartOptions,
 };
 use temporalio_sdk::{Runtime, Worker, WorkerOptions};
 use uuid::Uuid;
@@ -108,36 +106,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Command::Run { background, .. } => {
                 drop(activities);
                 let id = run_id.ok_or("missing run id")?;
-                let workflow_id = format!("hudson:{}:{id}", args.namespace);
-                // Stable IDs let resubmission repair a crash between the Postgres
-                // commit and Temporal start without starting a second active workflow.
-                let started = client
-                    .start_workflow(
-                        RunWorkflow::run,
-                        id,
-                        WorkflowStartOptions::new(args.task_queue, workflow_id.clone())
-                            .id_conflict_policy(WorkflowIdConflictPolicy::UseExisting)
-                            .id_reuse_policy(WorkflowIdReusePolicy::RejectDuplicate)
-                            .build(),
-                    )
-                    .await;
-                let handle = match started {
-                    Ok(handle) => handle,
-                    Err(temporalio_client::errors::WorkflowStartError::AlreadyStarted {
-                        ..
-                    }) => client.get_workflow_handle::<hudson_temporal::RunWorkflowDefinition>(
-                        workflow_id.clone(),
-                    ),
-                    Err(error) => return Err(error.into()),
-                };
-                println!(
-                    "{}",
-                    serde_json::json!({"run_id":id,"workflow_id":workflow_id})
-                );
+                let execution =
+                    hudson_temporal::ExecutionClient::new(client, args.namespace, args.task_queue);
+                let receipt = execution.start(id).await?;
+                println!("{}", serde_json::to_string(&receipt)?);
                 if !background {
-                    let view = handle
-                        .get_result(WorkflowGetResultOptions::default())
-                        .await?;
+                    let view = execution
+                        .result(id)
+                        .await
+                        .map_err(|error| -> Box<dyn std::error::Error> { error })?;
                     println!("{}", serde_json::to_string_pretty(&view)?);
                     if view.status == hudson_core::models::RunStatus::Failed {
                         return Err("agent run failed".into());
