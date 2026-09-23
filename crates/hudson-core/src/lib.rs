@@ -1,6 +1,7 @@
 //! Agent execution, model and tool adapters, and runtime controls.
 pub mod adapters;
 pub mod budgets;
+pub mod credentials;
 pub mod definitions;
 pub mod dispatch;
 pub mod models;
