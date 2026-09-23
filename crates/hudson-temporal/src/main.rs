@@ -46,6 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let store = Store::postgres_local("/tmp", &args.database, &args.namespace)?;
     let tree = Configuration::load(&args.config)?.build_temporal_tree(store, &actor)?;
+    let schedule_target =
+        hudson_temporal::ExecutionClient::schedule_target(&args.namespace, &args.task_queue);
+    let pump = hudson_temporal::SchedulingPump::new(&tree, actor.clone(), schedule_target.clone());
     // Blocking providers and PostgreSQL are constructed outside the Tokio runtime.
     let run_id = match &args.command {
         Command::Worker => None,
@@ -76,12 +79,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     )?;
                     *id
                 }
-                None => tree.runtime.submit_with_goal(
+                None => tree.runtime.submit_scheduled(
                     &actor,
                     tree.reference.clone(),
                     read_input(task.as_deref(), input_file.as_deref())?,
                     request_key.clone(),
                     tree.goal.clone(),
+                    Some(schedule_target),
                 )?,
             })
         }
@@ -97,11 +101,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let client = Client::new(Connection::connect(connection).await?, options)?;
         match args.command {
             Command::Worker => {
+                let execution = hudson_temporal::ExecutionClient::new(
+                    client.clone(),
+                    args.namespace,
+                    args.task_queue.clone(),
+                );
                 let options = WorkerOptions::new(args.task_queue)
                     .register_workflow::<RunWorkflow>()?
                     .register_activities(activities)
                     .build();
-                Worker::new(&runtime, client, options)?.run().await?;
+                let mut worker = Worker::new(&runtime, client, options)?;
+                let publisher = async {
+                    loop {
+                        match pump.publish_pending(&execution).await {
+                            Ok(report) => {
+                                for (id, error) in report.deferred {
+                                    eprintln!("Scheduling {id} deferred: {error}");
+                                }
+                            }
+                            Err(error) => eprintln!("Scheduling scan deferred: {error}"),
+                        }
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                };
+                tokio::select! {
+                    result = worker.run() => { result?; }
+                    () = publisher => {}
+                }
             }
             Command::Run { background, .. } => {
                 drop(activities);

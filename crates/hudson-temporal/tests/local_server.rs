@@ -378,6 +378,16 @@ fn question_survives_worker_restart_with_postgres() {
 #[test]
 #[ignore = "requires local PostgreSQL and starts separate Temporal worker/client processes"]
 fn background_returns_without_worker_and_foreground_waits_for_same_run() {
+    cli_scenario(false);
+}
+
+#[test]
+#[ignore = "requires local PostgreSQL and separate Temporal worker/client processes"]
+fn worker_recovers_submission_without_a_temporal_start() {
+    cli_scenario(true);
+}
+
+fn cli_scenario(recover: bool) {
     use std::process::{Child, Command, Stdio};
     struct Process(Child);
     impl Drop for Process {
@@ -427,6 +437,45 @@ fn background_returns_without_worker_and_foreground_waits_for_same_run() {
                     .stdout(Stdio::piped()).stderr(Stdio::piped());
                 command
             };
+            if recover {
+                let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
+                let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
+                let tree = hudson_core::configured::Configuration::load(file.path()).unwrap()
+                    .build_temporal_tree(store.clone(), &actor).unwrap();
+                let incompatible = tree.runtime.submit_scheduled(
+                    &actor, tree.reference.clone(), serde_json::json!({"task":"finish"}),
+                    Some("incompatible-goal".into()),
+                    Some(hudson_core::models::Goal {
+                        objective: "A different immutable goal".into(),
+                        success_schema: serde_json::json!({"type":"string"}),
+                        criteria: vec![],
+                    }),
+                    Some(hudson_temporal::ExecutionClient::schedule_target(&namespace, &namespace)),
+                ).unwrap();
+                drop(tree);
+                let interrupted = output(command().env("TEMPORAL_ADDRESS", "http://[invalid").args(["run","--input-file",input.path().to_str().unwrap(),"--request-key","task-1","--background"]).spawn().unwrap());
+                assert!(!interrupted.status.success());
+                let stderr = String::from_utf8(interrupted.stderr).unwrap();
+                let id: uuid::Uuid = stderr.lines().find_map(|line| line.strip_prefix("Run: ")).expect("run was persisted before connection failure").parse().unwrap();
+                let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
+                let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
+                assert_eq!(store.inspect(&actor, id).unwrap().status, RunStatus::Queued);
+                let worker = Process(command().arg("worker").spawn().unwrap());
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                loop {
+                    let view = store.inspect(&actor, id).unwrap();
+                    if view.status.terminal() { assert_eq!(view.status, RunStatus::Completed); break; }
+                    assert!(std::time::Instant::now() < deadline, "worker did not publish saved intent");
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                server_thread.join().unwrap();
+                assert_eq!(store.inspect(&actor, incompatible).unwrap().status, RunStatus::Queued,
+                    "a mismatched goal must remain deferred while valid work completes");
+                drop(worker);
+                let completed = output(command().args(["run","--resume", &id.to_string()]).spawn().unwrap());
+                assert!(completed.status.success(), "{}", String::from_utf8_lossy(&completed.stderr));
+                return;
+            }
             let background = output(command().args(["run","--input-file",input.path().to_str().unwrap(),"--request-key","task-1","--background"]).spawn().unwrap());
             assert!(background.status.success(), "{}", String::from_utf8_lossy(&background.stderr));
             let receipt: serde_json::Value = serde_json::from_slice(&background.stdout).unwrap();
