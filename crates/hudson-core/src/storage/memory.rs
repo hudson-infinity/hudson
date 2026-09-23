@@ -6,6 +6,8 @@ use uuid::Uuid;
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Data {
     #[serde(default)]
+    pub api_tokens: BTreeMap<Uuid, crate::credentials::ApiTokenRecord>,
+    #[serde(default)]
     pub schedule_requests: BTreeMap<Uuid, crate::scheduling::ScheduleRequest>,
     #[serde(default, with = "super::pairs")]
     pub memory_bindings: BTreeMap<(String, VersionRef), Option<crate::memory::MemoryConfig>>,

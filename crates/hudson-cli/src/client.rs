@@ -9,7 +9,31 @@ fn segment(id: &str) -> Result<&str, Box<dyn std::error::Error>> {
     Ok(id)
 }
 pub fn execute(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(name) = &args.api_token_env {
+        let url = reqwest::Url::parse(&args.url)?;
+        let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+        if (url.scheme() != "https" && !(url.scheme() == "http" && local))
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(
+                "authenticated API URL requires HTTPS or loopback HTTP without URL credentials"
+                    .into(),
+            );
+        }
+        let token = std::env::var(name).map_err(|_| "API token environment variable is missing")?;
+        if token.is_empty() {
+            return Err("API token environment variable is empty".into());
+        }
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}"))?;
+        value.set_sensitive(true);
+        headers.insert(reqwest::header::AUTHORIZATION, value);
+    }
     let client = reqwest::blocking::Client::builder()
+        .default_headers(headers)
         .timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;

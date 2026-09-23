@@ -40,8 +40,8 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         None => Store::default(),
     };
     let actor = Actor {
-        workspace_id: "local".into(),
-        id: "developer".into(),
+        workspace_id: args.workspace_id.clone(),
+        id: args.actor_id.clone(),
     };
     let mut tree = configuration.build_tree(store, &actor)?;
     let id = match args.resume {

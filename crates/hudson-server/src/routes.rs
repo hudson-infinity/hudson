@@ -3,7 +3,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
+    Extension, Json, Router,
 };
 use hudson_core::{
     adapters::{
@@ -359,12 +359,19 @@ fn assemble(
     Router::new()
         .route(
             "/openapi.json",
-            get(|| async {
-                (
-                    [(axum::http::header::CONTENT_TYPE, "application/json")],
-                    include_str!("../../../docs/openapi.json"),
-                )
-            }),
+            get(
+                |authenticated: Option<Extension<crate::auth::Authenticated>>| async move {
+                    let mut specification: Value =
+                        serde_json::from_str(include_str!("../../../docs/openapi.json"))
+                            .expect("checked OpenAPI document");
+                    specification["security"] = if authenticated.is_some() {
+                        json!([{"HudsonBearer":[]}])
+                    } else {
+                        json!([])
+                    };
+                    Json(specification)
+                },
+            ),
         )
         .route(
             "/health",
@@ -582,6 +589,7 @@ mod tests {
         let (status, spec) = request(&app, "GET", "/openapi.json", Value::Null).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(spec["openapi"], "3.1.0");
+        assert_eq!(spec["security"], json!([]));
         for name in spec["components"]["schemas"].as_object().unwrap().keys() {
             jsonschema::validator_for(&json!({"$ref":format!("#/components/schemas/{name}"), "components":spec["components"]})).unwrap();
         }

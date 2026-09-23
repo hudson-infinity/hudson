@@ -33,8 +33,8 @@ pub fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         None => Store::default(),
     };
     let actor = Actor {
-        workspace_id: "local".into(),
-        id: "developer".into(),
+        workspace_id: args.workspace_id.clone(),
+        id: args.actor_id.clone(),
     };
     let (mut runtime, reference, goal) = baseline.build(store.clone(), &actor)?;
     let candidate = candidate
