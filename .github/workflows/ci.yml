@@ -35,7 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y postgresql
+          sudo apt-get install -y postgresql protobuf-compiler
           sudo systemctl stop postgresql
           pg_bin="$(pg_config --bindir)"
           "$pg_bin/initdb" -D "$RUNNER_TEMP/hudson-pg" --auth=trust

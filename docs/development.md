@@ -6,6 +6,10 @@ PostgreSQL persistence. The [code structure](code-structure.md) describes owners
 the [implementation audit](implementation-status.md) distinguishes evidence from
 remaining work.
 
+Temporal SDK builds require the Protocol Buffers compiler (`protoc`) on PATH.
+On Ubuntu install `protobuf-compiler`; on macOS install `protobuf` with Homebrew.
+The hosted workflow installs it explicitly.
+
 ## Run or install locally
 
 From the repository root:
