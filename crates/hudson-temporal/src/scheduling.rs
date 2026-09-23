@@ -12,12 +12,17 @@ pub struct PublicationReport {
     pub deferred: Vec<(uuid::Uuid, String)>,
 }
 
-pub struct SchedulingPump {
-    store: Option<Store>,
-    actor: Actor,
+#[derive(Clone)]
+struct ConfiguredBinding {
     agent: VersionRef,
     goal: Option<Goal>,
     budget: Option<hudson_core::budgets::ModelBudgetBinding>,
+}
+
+pub struct SchedulingPump {
+    store: Option<Store>,
+    actor: Actor,
+    binding: Option<ConfiguredBinding>,
     target: ScheduleTarget,
 }
 impl SchedulingPump {
@@ -25,9 +30,19 @@ impl SchedulingPump {
         Self {
             store: Some(tree.runtime.store.clone()),
             actor,
-            agent: tree.reference.clone(),
-            goal: tree.goal.clone(),
-            budget: tree.runtime.model_budget_binding(),
+            binding: Some(ConfiguredBinding {
+                agent: tree.reference.clone(),
+                goal: tree.goal.clone(),
+                budget: tree.runtime.model_budget_binding(),
+            }),
+            target,
+        }
+    }
+    pub fn published(store: Store, actor: Actor, target: ScheduleTarget) -> Self {
+        Self {
+            store: Some(store),
+            actor,
+            binding: None,
             target,
         }
     }
@@ -41,10 +56,11 @@ impl SchedulingPump {
         }
         let store = self.store.as_ref().expect("live scheduling pump").clone();
         let actor = self.actor.clone();
-        let agent = self.agent.clone();
+        let binding = self.binding.clone();
         let target = self.target.clone();
-        let ids = tokio::task::spawn_blocking(move || {
-            store.pending_schedules(&actor, &agent, &target, 100)
+        let ids = tokio::task::spawn_blocking(move || match binding {
+            Some(binding) => store.pending_schedules(&actor, &binding.agent, &target, 100),
+            None => store.pending_published_schedules(&actor, &target, 100),
         })
         .await??;
         let mut report = PublicationReport::default();
@@ -60,14 +76,27 @@ impl SchedulingPump {
     async fn publish_one(&self, execution: &ExecutionClient, id: uuid::Uuid) -> Result<(), Error> {
         let store = self.store.as_ref().expect("live scheduling pump").clone();
         let actor = self.actor.clone();
-        let agent = self.agent.clone();
-        let goal = self.goal.clone();
-        let budget = self.budget.clone();
+        let binding = self.binding.clone();
         let target = self.target.clone();
         tokio::task::spawn_blocking(move || {
             store.record_schedule_attempt(&actor, id, &target)?;
-            store.validate_resume(&actor, id, &agent, &goal)?;
-            store.validate_model_budget(&actor, id, &budget)
+            let binding = match binding {
+                Some(binding) => binding,
+                None => {
+                    let reference = store.published_root(&actor, id)?;
+                    let tree = store
+                        .published_configuration(&actor, &reference)?
+                        .build_admission_tree(store.clone(), &actor)
+                        .map_err(|error| hudson_core::Error::Invalid(error.to_string()))?;
+                    ConfiguredBinding {
+                        agent: tree.reference.clone(),
+                        goal: tree.goal.clone(),
+                        budget: tree.runtime.model_budget_binding(),
+                    }
+                }
+            };
+            store.validate_resume(&actor, id, &binding.agent, &binding.goal)?;
+            store.validate_model_budget(&actor, id, &binding.budget)
         })
         .await??;
         execution.start(id).await?;

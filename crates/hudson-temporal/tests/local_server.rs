@@ -79,6 +79,16 @@ fn temporal_runs_existing_runtime_activity() {
 #[test]
 #[ignore = "starts a local Temporal server (downloads the CLI on first use)"]
 fn team_children_run_concurrently_before_lead_continues() {
+    team_scenario(false);
+}
+
+#[test]
+#[ignore = "starts a local Temporal server"]
+fn published_team_reconstructs_root_and_delegated_children() {
+    team_scenario(true);
+}
+
+fn team_scenario(published: bool) {
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -172,20 +182,33 @@ fn team_children_run_concurrently_before_lead_continues() {
     };
     let store = Store::default();
     let store_guard = store.clone();
-    let tree = Configuration::load(file.path())
-        .unwrap()
-        .build_temporal_tree(store.clone(), &actor)
-        .unwrap();
+    let config = Configuration::load(file.path()).unwrap();
+    if published {
+        store
+            .publish_configuration(&actor, &config, "team")
+            .unwrap();
+    }
+    let target = hudson_temporal::ExecutionClient::schedule_target("test", "hudson-team-test");
+    let tree = config.build_temporal_tree(store.clone(), &actor).unwrap();
     let id = tree
         .runtime
-        .submit(
+        .submit_scheduled(
             &actor,
             tree.reference.clone(),
             serde_json::json!("work"),
             None,
+            None,
+            Some(target.clone()),
         )
         .unwrap();
+    drop(file);
     let inspect_actor = actor.clone();
+    let activities = if published {
+        drop(tree);
+        RunActivities::published(store.clone(), actor, target).unwrap()
+    } else {
+        RunActivities::new(tree.into_scheduled(), actor)
+    };
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async move {
@@ -196,7 +219,7 @@ fn team_children_run_concurrently_before_lead_continues() {
             let options = WorkerOptions::new("hudson-team-test")
                 .register_workflow::<RunWorkflow>()
                 .unwrap()
-                .register_activities(RunActivities::new(tree.into_scheduled(), actor))
+                .register_activities(activities)
                 .build();
             let mut worker = Worker::new(&runtime, env.client().clone(), options).unwrap();
             let stop = worker.shutdown_handle();
@@ -235,6 +258,16 @@ fn team_children_run_concurrently_before_lead_continues() {
 #[test]
 #[ignore = "requires local PostgreSQL hudson_harness_test_20260921 and Temporal CLI"]
 fn question_survives_worker_restart_with_postgres() {
+    question_scenario(false);
+}
+
+#[test]
+#[ignore = "requires PostgreSQL and a local Temporal server"]
+fn published_question_survives_worker_restart_with_postgres() {
+    question_scenario(true);
+}
+
+fn question_scenario(published: bool) {
     use hudson_core::models::WaitReason;
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let endpoint = format!("http://{}/chat", server.server_addr());
@@ -271,19 +304,32 @@ fn question_survives_worker_restart_with_postgres() {
     };
     let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
     let store_guard = store.clone();
-    let tree = Configuration::load(file.path())
-        .unwrap()
-        .build_temporal_tree(store.clone(), &actor)
-        .unwrap();
+    let config = Configuration::load(file.path()).unwrap();
+    if published {
+        store
+            .publish_configuration(&actor, &config, "question")
+            .unwrap();
+        std::fs::remove_file(file.path()).unwrap();
+    }
+    let target = hudson_temporal::ExecutionClient::schedule_target(&namespace, "hudson-restart");
+    let tree = config.build_temporal_tree(store.clone(), &actor).unwrap();
     let id = tree
         .runtime
-        .submit(
+        .submit_scheduled(
             &actor,
             tree.reference.clone(),
             serde_json::json!("choose a city"),
             Some("restart-test".into()),
+            None,
+            Some(target.clone()),
         )
         .unwrap();
+    let activities = if published {
+        drop(tree);
+        RunActivities::published(store.clone(), actor.clone(), target.clone()).unwrap()
+    } else {
+        RunActivities::new(tree.into_scheduled(), actor.clone())
+    };
     tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(async move {
@@ -294,7 +340,7 @@ fn question_survives_worker_restart_with_postgres() {
             let options = WorkerOptions::new("hudson-restart")
                 .register_workflow::<RunWorkflow>()
                 .unwrap()
-                .register_activities(RunActivities::new(tree.into_scheduled(), actor.clone()))
+                .register_activities(activities)
                 .build();
             let mut worker = Worker::new(&runtime, env.client().clone(), options).unwrap();
             let stop = worker.shutdown_handle();
@@ -332,12 +378,15 @@ fn question_survives_worker_restart_with_postgres() {
             // Reopen PostgreSQL and rebuild every model/tool executor, then apply
             // the answer while no Temporal worker is running.
             let actor2 = actor.clone();
-            let tree = tokio::task::spawn_blocking(move || {
+            let activities = tokio::task::spawn_blocking(move || {
                 let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
-                let tree = Configuration::load(file.path())
-                    .unwrap()
-                    .build_temporal_tree(store, &actor2)
-                    .unwrap();
+                let config = if published {
+                    let root = store.published_root(&actor2, id).unwrap();
+                    store.published_configuration(&actor2, &root).unwrap()
+                } else {
+                    Configuration::load(file.path()).unwrap()
+                };
+                let tree = config.build_admission_tree(store.clone(), &actor2).unwrap();
                 tree.runtime
                     .provide_input(
                         &actor2,
@@ -347,14 +396,23 @@ fn question_survives_worker_restart_with_postgres() {
                         serde_json::json!("Boston"),
                     )
                     .unwrap();
-                tree
+                drop(tree);
+                if published {
+                    RunActivities::published(store, actor2, target).unwrap()
+                } else {
+                    let tree = Configuration::load(file.path())
+                        .unwrap()
+                        .build_temporal_tree(store, &actor2)
+                        .unwrap();
+                    RunActivities::new(tree.into_scheduled(), actor2)
+                }
             })
             .await
             .unwrap();
             let options = WorkerOptions::new("hudson-restart")
                 .register_workflow::<RunWorkflow>()
                 .unwrap()
-                .register_activities(RunActivities::new(tree.into_scheduled(), actor))
+                .register_activities(activities)
                 .build();
             let mut worker = Worker::new(&runtime, env.client().clone(), options).unwrap();
             let stop = worker.shutdown_handle();
@@ -393,7 +451,14 @@ fn api_submission_survives_api_exit_and_runs_on_separate_worker() {
     cli_scenario(SubmissionMode::Http);
 }
 
+#[test]
+#[ignore = "requires PostgreSQL and separate Temporal worker processes"]
+fn published_worker_executes_without_configuration_file() {
+    cli_scenario(SubmissionMode::Published);
+}
+
 enum SubmissionMode {
+    Published,
     Direct,
     FailedClient,
     Http,
@@ -450,7 +515,12 @@ fn cli_scenario(mode: SubmissionMode) {
             let namespace = format!("temporal-cli-{}", uuid::Uuid::new_v4());
             let command = || {
                 let mut command = Command::new(env!("CARGO_BIN_EXE_hudson-temporal"));
-                command.args(["--config", file.path().to_str().unwrap(), "--database", &database, "--namespace", &namespace, "--task-queue", &namespace])
+                if matches!(mode, SubmissionMode::Published) {
+                    command.arg("--published");
+                } else {
+                    command.args(["--config", file.path().to_str().unwrap()]);
+                }
+                command.args(["--database", &database, "--namespace", &namespace, "--task-queue", &namespace])
                     .env("TEMPORAL_ADDRESS", format!("127.0.0.1:{port}"))
                     .env("TEMPORAL_NAMESPACE", "default")
                     .env("HUDSON_EXECUTION_ONLY_TEST_KEY", "test-worker-only")
@@ -460,8 +530,11 @@ fn cli_scenario(mode: SubmissionMode) {
             if !matches!(mode, SubmissionMode::Direct) {
                 let store = Store::postgres_local("/tmp", &database, &namespace).unwrap();
                 let actor = Actor { workspace_id:"local".into(), id:"developer".into() };
-                let tree = hudson_core::configured::Configuration::load(file.path()).unwrap()
-                    .build_admission_tree(store.clone(), &actor).unwrap();
+                let config = hudson_core::configured::Configuration::load(file.path()).unwrap();
+                if matches!(mode, SubmissionMode::Published) {
+                    store.publish_configuration(&actor, &config, "publication").unwrap();
+                }
+                let tree = config.build_admission_tree(store.clone(), &actor).unwrap();
                 let incompatible = tree.runtime.submit_scheduled(
                     &actor, tree.reference.clone(), serde_json::json!({"task":"finish"}),
                     Some("incompatible-goal".into()),
@@ -505,6 +578,14 @@ fn cli_scenario(mode: SubmissionMode) {
                     });
                     drop(api); // No API process or client remains when the worker starts.
                     id
+                } else if matches!(mode, SubmissionMode::Published) {
+                    let config = store.published_configuration(&actor, &store.published_root(&actor, incompatible).unwrap()).unwrap();
+                    let tree = config.build_admission_tree(store.clone(), &actor).unwrap();
+                    let id = tree.runtime.submit_scheduled(&actor, tree.reference.clone(), serde_json::json!({"task":"finish"}),
+                        Some("published-run".into()), tree.goal.clone(),
+                        Some(hudson_temporal::ExecutionClient::schedule_target(&namespace, &namespace))).unwrap();
+                    std::fs::remove_file(file.path()).unwrap();
+                    id
                 } else {
                 let interrupted = output(command().env("TEMPORAL_ADDRESS", "http://[invalid").args(["run","--input-file",input.path().to_str().unwrap(),"--request-key","task-1","--background"]).spawn().unwrap());
                 assert!(!interrupted.status.success());
@@ -527,6 +608,9 @@ fn cli_scenario(mode: SubmissionMode) {
                 assert_eq!(store.inspect(&actor, incompatible).unwrap().status, RunStatus::Queued,
                     "a mismatched goal must remain deferred while valid work completes");
                 drop(worker);
+                if matches!(mode, SubmissionMode::Published) {
+                    return;
+                }
                 let completed = output(command().args(["run","--resume", &id.to_string()]).spawn().unwrap());
                 assert!(completed.status.success(), "{}", String::from_utf8_lossy(&completed.stderr));
                 return;

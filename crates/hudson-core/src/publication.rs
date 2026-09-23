@@ -117,6 +117,35 @@ impl Store {
         })
     }
 
+    /// Find the publication pinned by a run's root, including delegated descendants.
+    /// Every ancestry edge is checked against the same authenticated owner.
+    pub fn published_root(&self, actor: &Actor, id: uuid::Uuid) -> Result<VersionRef> {
+        self.read(|data| {
+            let mut current = id;
+            let mut visited = std::collections::BTreeSet::new();
+            loop {
+                if !visited.insert(current) {
+                    return Err(Error::Conflict("cyclic run ancestry".into()));
+                }
+                let run = data.run(actor, current)?;
+                if let Some(operation) = run.parent_operation {
+                    current = data
+                        .operations
+                        .get(&operation)
+                        .ok_or(Error::NotFound)?
+                        .run_id;
+                } else {
+                    let record = data
+                        .publications
+                        .get(&(actor.workspace_id.clone(), run.agent_ref.clone()))
+                        .filter(|record| record.actor_id == actor.id)
+                        .ok_or(Error::NotFound)?;
+                    return Ok(record.receipt.agent_ref.clone());
+                }
+            }
+        })
+    }
+
     /// Restore a pinned publication without reading its original files or secrets.
     pub fn published_configuration(
         &self,

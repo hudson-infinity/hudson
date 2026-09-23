@@ -9,9 +9,13 @@ use temporalio_sdk::{Runtime, Worker, WorkerOptions};
 use uuid::Uuid;
 
 #[derive(Parser)]
+#[command(group(clap::ArgGroup::new("configuration").required(true).args(["config", "published"])))]
 struct Args {
     #[arg(long)]
-    config: PathBuf,
+    config: Option<PathBuf>,
+    /// Load this owner's immutable published revisions on demand (worker only).
+    #[arg(long)]
+    published: bool,
     #[arg(long)]
     database: String,
     #[arg(long, default_value = "local")]
@@ -44,15 +48,33 @@ enum Command {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+    if args.published && !matches!(&args.command, Command::Worker) {
+        return Err(
+            "--published supports worker mode; submit runs through the admission API".into(),
+        );
+    }
     let actor = Actor {
         workspace_id: args.workspace_id.clone(),
         id: args.actor_id.clone(),
     };
     let store = Store::postgres_local("/tmp", &args.database, &args.namespace)?;
-    let tree = Configuration::load(&args.config)?.build_temporal_tree(store, &actor)?;
+    let tree = args
+        .config
+        .as_ref()
+        .map(|path| Configuration::load(path)?.build_temporal_tree(store.clone(), &actor))
+        .transpose()?;
     let schedule_target =
         hudson_temporal::ExecutionClient::schedule_target(&args.namespace, &args.task_queue);
-    let pump = hudson_temporal::SchedulingPump::new(&tree, actor.clone(), schedule_target.clone());
+    let pump = match &tree {
+        Some(tree) => {
+            hudson_temporal::SchedulingPump::new(tree, actor.clone(), schedule_target.clone())
+        }
+        None => hudson_temporal::SchedulingPump::published(
+            store.clone(),
+            actor.clone(),
+            schedule_target.clone(),
+        ),
+    };
     // Blocking providers and PostgreSQL are constructed outside the Tokio runtime.
     let run_id = match &args.command {
         Command::Worker => None,
@@ -63,6 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             request_key,
             ..
         } => {
+            let tree = tree.as_ref().ok_or("configured runtime required")?;
             Some(match resume {
                 Some(id) => {
                     let run = tree.runtime.store.inspect(&actor, *id)?;
@@ -89,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     read_input(task.as_deref(), input_file.as_deref())?,
                     request_key.clone(),
                     tree.goal.clone(),
-                    Some(schedule_target),
+                    Some(schedule_target.clone()),
                 )?,
             })
         }
@@ -97,7 +120,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(id) = run_id {
         eprintln!("Run: {id}");
     }
-    let activities = RunActivities::new(tree.into_scheduled(), actor);
+    let activities = match tree {
+        Some(tree) => RunActivities::new(tree.into_scheduled(), actor),
+        None => RunActivities::published(store.clone(), actor, schedule_target)?,
+    };
     tokio::runtime::Runtime::new()?.block_on(async move {
         let runtime = Runtime::from_current_tokio(Default::default())?;
         let (connection, options) =

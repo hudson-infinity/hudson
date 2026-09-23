@@ -1,7 +1,7 @@
 # Customer agent and tool publication
 
-Status: the trusted storage foundation is implemented; customer HTTP publication
-and dynamic worker loading are still planned. This extends the authenticated
+Status: trusted atomic publication and dynamic worker loading are implemented;
+customer HTTP publication is still planned. This extends the authenticated
 single-instance API. Existing startup configuration and operator commands remain
 available. Hudson Sandbox remains a separate product; this work does not load
 customer code or add a host shell.
@@ -72,9 +72,9 @@ must exclude run state, operations, API credentials and unrelated workspace data
 
 ## Execution handoff
 
-The current Temporal worker only knows the tree loaded at startup. Storing new
-agent rows alone would create revisions that the worker cannot execute. Publication
-must therefore include a worker reconstruction contract:
+The startup-configured Temporal worker only knows its original tree. Published
+mode instead loads immutable revisions from storage. Storing agent rows alone is
+insufficient; the reconstruction contract is:
 
 - Persist a canonical effective configuration for each published root revision.
 - Resolve it by the run's pinned reference under the authenticated workspace.
@@ -123,6 +123,7 @@ remain valid after runs start.
 
 Validation includes immutable retries, ownership, nested rollback, preservation of
 live state, deleted skill sources, and concurrent PostgreSQL publication followed
-by reconnection and run reconstruction. Public request validation and the restarted
-API-to-worker acceptance test above remain required before advertising self-service
+by reconnection and run reconstruction. Dynamic worker reconstruction is covered separately by Temporal integration tests.
+Public request validation and the restarted API-to-worker acceptance test above
+remain required before advertising self-service
 publication.
