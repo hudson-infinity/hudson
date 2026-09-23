@@ -1,5 +1,9 @@
 # Implementation audit
 
+The managed-capability extension is tracked in [capability-delivery.md](capability-delivery.md).
+Its aggregate completion audit is still pending. The historical initial-milestone
+verification below does not establish completion of that extension.
+
 Status: the requested initial agent harness is implemented and locally verified.
 The user clarified provider scope to **OpenAI, Anthropic, and Gemini for now**.
 This audit covers their text-and-tool agent interfaces with GPT as the default,
@@ -21,14 +25,14 @@ records delivery to main; package publication and deployment are separate steps.
 
 | Requirement | Current evidence | Boundaries and later work |
 | --- | --- | --- |
-| Generic, domain-independent loop | `hudson-harness/src/agent_loop.rs`; checkpoint and real tool-cycle tests | Broader context/multimodal behavior is not implemented |
+| Generic, domain-independent loop | `hudson-harness/src/agent_loop.rs`; checkpoint and real tool-cycle tests | Bounded context archival/retrieval is implemented in the extension; multimodal behavior remains outside scope |
 | Rust implementation, maintainable module boundaries | Six Cargo crates; workspace tests and Clippy | Current architecture/development guides consolidated; later API cleanup remains possible |
 | PostgreSQL | Reconnect and shared-budget database tests; multi-process approval smoke | SIGKILL recovery smoke and local operator receipt reconciliation now pass; automatic ownership remains deferred |
 | GPT default; OpenAI, Anthropic, Gemini | Current protocol tests cover authentication, schemas, complete tool cycles, continuation metadata, output caps and usage; default model selection tests pass | Anthropic live requests are unverified; model-specific/native multimodal features are outside this version |
-| Customer-defined tools | Rust registry and configured HTTP tools; HTTP and approval smoke tests | Hosted authentication is outside the current local API |
-| Skills | Inline and Markdown catalogs, on-demand loading, immutable contents tests | Optional standard package/frontmatter support; not required for current explicit-file API |
-| Goals | Run objective plus deterministic success schema; mismatch/completion regression | Application-specific semantic/business checks beyond output contracts |
-| Subagents | Configured trees, shared call budgets, persisted lineage, cancellation and join; child-provider routing and approval after restart pass | The original worker/server remains synchronous; the Temporal host schedules concurrent child workflows |
+| Customer-defined tools | Rust registry, configured HTTP tools, and pinned MCP servers; approval-aware runtime tests | Hosted authentication is outside the current local API |
+| Skills | Inline, Markdown and standard SKILL.md packages, on-demand resources, immutable contents tests | Package scripts are read-only resources and are never executed |
+| Goals | Run objective, deterministic value criteria, recorded verifier-tool checks and operation evidence | Tool owners establish artifact-specific correctness; passing shape checks alone do not prove truth |
+| Subagents | Configured trees, shared call budgets, persisted lineage, cancellation and join; child-provider routing and approval after restart pass | Durable dependencies and bounded repeated delegation are in the extension; the original worker/server remains synchronous |
 | Temporal execution | Foreground/background process test, real-server concurrent team test, Postgres question replay after worker restart; SIGKILL during an approved write with no replay and receipt reconciliation | Local configuration and identity; no hosted multi-tenant service or submission outbox |
 | Low model spend | Live GPT and capped Gemini tool cycles; routine checks use local stubs; output and shared-call caps | Provider token reports are recorded; lost responses and currency costs remain unavailable |
 | Usable product | README commands, generic HTTP CLI, JSON examples, config check, operator controls | Local worker/server installation passed; registry publication is not configured |

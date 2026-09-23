@@ -18,6 +18,8 @@ struct Definition {
     name: String,
     instructions: String,
     #[serde(default)]
+    coordination: crate::coordination::CoordinationPolicy,
+    #[serde(default)]
     context: Option<crate::context::ContextPolicy>,
     #[serde(default)]
     memory: Option<crate::memory::MemoryConfig>,
@@ -605,6 +607,7 @@ fn build(
     };
     let reference = agent.reference();
     store.ensure_agent(agent)?;
+    store.bind_coordination_policy(&actor.workspace_id, &reference, &definition.coordination)?;
     store.bind_memory(&actor.workspace_id, &reference, definition.memory)?;
     store.bind_context_policy(&actor.workspace_id, &reference, definition.context.as_ref())?;
     store.bind_model_transport(&actor.workspace_id, &reference, &transport_fingerprint)?;
@@ -651,6 +654,7 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
     }
     selected_model(definition)?;
     definition.limits.validate()?;
+    definition.coordination.validate()?;
     if let Some(memory) = &definition.memory {
         memory.validate()?;
     }
