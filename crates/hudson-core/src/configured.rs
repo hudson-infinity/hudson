@@ -607,7 +607,13 @@ fn build(
     };
     let reference = agent.reference();
     store.ensure_agent(agent)?;
-    store.bind_coordination_policy(&actor.workspace_id, &reference, &definition.coordination)?;
+    if is_team {
+        store.bind_coordination_policy(
+            &actor.workspace_id,
+            &reference,
+            &definition.coordination,
+        )?;
+    }
     store.bind_memory(&actor.workspace_id, &reference, definition.memory)?;
     store.bind_context_policy(&actor.workspace_id, &reference, definition.context.as_ref())?;
     store.bind_model_transport(&actor.workspace_id, &reference, &transport_fingerprint)?;
@@ -957,6 +963,47 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(3));
         }
     }
+    #[test]
+    fn existing_single_agent_runs_rebuild_without_coordination_binding() {
+        let source = serde_json::json!({"name":"single","instructions":"help","provider":"ollama","model":"fixture"});
+        let store = Store::default();
+        let actor = Actor {
+            workspace_id: "company".into(),
+            id: "owner".into(),
+        };
+        let tree = Configuration(serde_json::from_value(source.clone()).unwrap())
+            .build_temporal_tree(store.clone(), &actor)
+            .unwrap();
+        let id = tree
+            .runtime
+            .submit(
+                &actor,
+                tree.reference.clone(),
+                serde_json::json!("task"),
+                None,
+            )
+            .unwrap();
+        // Simulate storage written before optional capability bindings existed.
+        store
+            .transact(|data| {
+                data.coordination_policies.clear();
+                data.memory_bindings.clear();
+                data.context_policies.clear();
+                Ok(())
+            })
+            .unwrap();
+        let rebuilt = Configuration(serde_json::from_value(source).unwrap())
+            .build_temporal_tree(store.clone(), &actor)
+            .unwrap();
+        assert_eq!(rebuilt.reference, tree.reference);
+        store
+            .validate_resume(&actor, id, &rebuilt.reference, &None)
+            .unwrap();
+        assert!(store
+            .read(|data| Ok(data.coordination_policies.is_empty()))
+            .unwrap());
+    }
+
     #[test]
     fn customer_mcp_example_loads_offline() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
