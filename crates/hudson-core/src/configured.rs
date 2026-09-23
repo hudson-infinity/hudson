@@ -20,6 +20,8 @@ struct Definition {
     #[serde(default)]
     context: Option<crate::context::ContextPolicy>,
     #[serde(default)]
+    memory: Option<crate::memory::MemoryConfig>,
+    #[serde(default)]
     allow_user_input: bool,
     #[serde(default)]
     model: Option<String>,
@@ -310,6 +312,36 @@ fn build(
     };
     let mut registry = ToolRegistry::new();
     let mut bindings = Vec::new();
+    if let Some(memory) = &definition.memory {
+        let read_policy = format!("memory-read:{}:{}", definition.name, definition.version);
+        let write_policy = format!("memory-write:{}:{}", definition.name, definition.version);
+        for tool in crate::memory::register_tools(
+            &mut registry,
+            store.clone(),
+            actor.clone(),
+            memory.scope.clone(),
+            &read_policy,
+            &write_policy,
+        )? {
+            bindings.push(AgentTool {
+                tool_ref: tool.reference(),
+                alias: tool.name.clone(),
+            });
+            store.ensure_tool(tool)?;
+        }
+        for (policy, require_approval) in [(&read_policy, false), (&write_policy, true)] {
+            store.ensure_policy(
+                &actor.workspace_id,
+                policy,
+                Policy {
+                    actors: [actor.id.clone()].into(),
+                    approvers: [actor.id.clone()].into(),
+                    require_approval,
+                },
+            )?;
+        }
+    }
+
     if let Some(context) = &definition.context {
         let policy_ref = format!("context:{}:{}", definition.name, definition.version);
         let tool = crate::context::register(
@@ -463,6 +495,7 @@ fn build(
     };
     let reference = agent.reference();
     store.ensure_agent(agent)?;
+    store.bind_memory(&actor.workspace_id, &reference, definition.memory)?;
     store.bind_context_policy(&actor.workspace_id, &reference, definition.context.as_ref())?;
     store.bind_model_transport(&actor.workspace_id, &reference, &transport_fingerprint)?;
     Ok((Runtime::new(store, AgentLoop, model, executor), reference))
@@ -508,6 +541,9 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
     }
     selected_model(definition)?;
     definition.limits.validate()?;
+    if let Some(memory) = &definition.memory {
+        memory.validate()?;
+    }
     if let Some(context) = &definition.context {
         context.validate()?;
     }
@@ -535,6 +571,9 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
         }
     }
     let mut names = std::collections::BTreeSet::new();
+    if definition.memory.is_some() {
+        names.extend(["recall_memory", "retain_memory", "delete_memory"].map(str::to_owned));
+    }
     if definition.context.is_some() {
         names.insert("read_context_artifact".to_owned());
     }
