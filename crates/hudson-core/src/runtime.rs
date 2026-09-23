@@ -49,6 +49,22 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
         request_key: Option<String>,
         goal: Option<Goal>,
     ) -> Result<Uuid> {
+        self.submit_scheduled(actor, agent_ref, input, request_key, goal, None)
+    }
+
+    /// Commit the run and optional scheduling intent in one store transaction.
+    pub fn submit_scheduled(
+        &self,
+        actor: &Actor,
+        agent_ref: VersionRef,
+        input: Value,
+        request_key: Option<String>,
+        goal: Option<Goal>,
+        schedule: Option<crate::scheduling::ScheduleTarget>,
+    ) -> Result<Uuid> {
+        if let Some(target) = &schedule {
+            target.validate()?;
+        }
         if let Some(goal) = &goal {
             if goal.objective.trim().is_empty() || goal.objective.len() > 16384 {
                 return Err(Error::Invalid(
@@ -80,6 +96,7 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
             if let Some(id) = key.as_ref().and_then(|k| d.submissions.get(k)) {
                 if d.runs[id].input_digest != input_digest
                     || d.runs[id].model_budget != self.model.budget_binding()
+                    || d.schedule_requests.get(id).map(|r| &r.target) != schedule.as_ref()
                 {
                     return Err(Error::Conflict(
                         "submission key reused with different input or model budget".into(),
@@ -122,6 +139,15 @@ impl<B: Backend, M: ModelExecutor, T: ToolExecutor> Runtime<B, M, T> {
                 revision: 0,
             };
             d.runs.insert(id, run);
+            if let Some(target) = schedule {
+                d.schedule_requests.insert(
+                    id,
+                    crate::scheduling::ScheduleRequest {
+                        target,
+                        acknowledged: false,
+                    },
+                );
+            }
             if let Some(key) = key {
                 d.submissions.insert(key, id);
             }
