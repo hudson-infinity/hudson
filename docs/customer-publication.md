@@ -1,6 +1,7 @@
 # Customer agent and tool publication
 
-Status: implementation plan, not a shipped API. This extends the authenticated
+Status: the trusted storage foundation is implemented; customer HTTP publication
+and dynamic worker loading are still planned. This extends the authenticated
 single-instance API. Existing startup configuration and operator commands remain
 available. Hudson Sandbox remains a separate product; this work does not load
 customer code or add a host shell.
@@ -103,3 +104,25 @@ supported throughout migration.
 Multi-workspace routing, public connection provisioning, browser sessions and a
 self-service administration UI are separate follow-ups. They must not be implied
 by successfully publishing metadata in a single configured workspace.
+
+## Trusted storage foundation
+
+`Store::publish_configuration` validates the complete admission tree without
+execution credentials, checks it against a private snapshot of current state, and
+commits definitions, bindings, a portable configuration, and a retry receipt in one
+transaction. Existing budgets retain their usage. Failed nested definitions leave
+no partial publication. `Store::published_configuration` restores the pinned tree
+without reopening skill files; loaded skill instructions and package resources are
+stored with the revision.
+
+These methods are for trusted installation code. They do not accept HTTP requests
+or make raw administrative configuration safe for customers. A revision that already
+has legacy runs must use a new version for its first publication, because the old
+runs did not pin the persisted configuration. Retries of an existing publication
+remain valid after runs start.
+
+Validation includes immutable retries, ownership, nested rollback, preservation of
+live state, deleted skill sources, and concurrent PostgreSQL publication followed
+by reconnection and run reconstruction. Public request validation and the restarted
+API-to-worker acceptance test above remain required before advertising self-service
+publication.

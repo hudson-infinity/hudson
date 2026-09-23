@@ -5,6 +5,11 @@ use uuid::Uuid;
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Data {
+    #[serde(default, with = "super::pairs")]
+    pub publications: BTreeMap<(String, VersionRef), crate::publication::PublishedConfiguration>,
+    #[serde(default, with = "super::pairs")]
+    pub publication_keys:
+        BTreeMap<(String, String, String), crate::publication::PublicationReceipt>,
     #[serde(default)]
     pub api_tokens: BTreeMap<Uuid, crate::credentials::ApiTokenRecord>,
     #[serde(default)]
@@ -81,6 +86,13 @@ pub struct MemoryStore {
 }
 
 impl MemoryStore {
+    pub(crate) fn staging(data: Data) -> Self {
+        Self {
+            data: Arc::new(Mutex::new(data)),
+            postgres: None,
+        }
+    }
+
     pub fn inspect_operation(&self, actor: &Actor, id: Uuid) -> Result<OperationView> {
         self.read(|d| {
             let operation = d.operations.get(&id).ok_or(Error::NotFound)?;

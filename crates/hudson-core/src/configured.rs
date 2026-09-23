@@ -10,9 +10,9 @@ use crate::{
     storage::Store,
 };
 use hudson_harness::AgentLoop;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Definition {
     name: String,
@@ -64,7 +64,7 @@ struct Definition {
     #[serde(default)]
     subagents: Vec<Definition>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SkillFile {
     name: String,
@@ -108,14 +108,14 @@ fn load_skill_files(
     Ok(())
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SharedBudget {
     group: String,
     limit: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HttpTool {
     name: String,
@@ -131,7 +131,7 @@ struct HttpTool {
     require_approval: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfiguredMcpServer {
     endpoint: String,
@@ -145,7 +145,7 @@ struct ConfiguredMcpServer {
     require_approval: Option<bool>,
     tools: Vec<ConfiguredMcpTool>,
 }
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConfiguredMcpTool {
     name: String,
@@ -782,8 +782,66 @@ fn validate_contracts(definition: &Definition) -> Result<(), Box<dyn std::error:
 }
 
 /// Validated, immutable startup configuration shared by CLI and HTTP hosts.
+#[derive(Clone)]
 pub struct Configuration(Definition);
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenDefinition {
+    definition: Definition,
+    packages: Vec<SkillPackage>,
+    children: Vec<FrozenDefinition>,
+}
+impl FrozenDefinition {
+    fn freeze(mut definition: Definition) -> Self {
+        let packages = std::mem::take(&mut definition.loaded_packages);
+        let children = std::mem::take(&mut definition.subagents)
+            .into_iter()
+            .map(Self::freeze)
+            .collect();
+        Self {
+            definition,
+            packages,
+            children,
+        }
+    }
+    fn thaw(self) -> Result<Definition, Box<dyn std::error::Error>> {
+        let mut definition = self.definition;
+        if !definition.skill_files.is_empty()
+            || !definition.skill_packages.is_empty()
+            || !definition.subagents.is_empty()
+        {
+            return Err("published configuration cannot reference filesystem inputs".into());
+        }
+        if !definition.skills.is_empty() || !self.packages.is_empty() {
+            SkillCatalog::with_packages(definition.skills.clone(), self.packages.clone())?;
+        }
+        definition.loaded_packages = self.packages;
+        definition.subagents = self
+            .children
+            .into_iter()
+            .map(Self::thaw)
+            .collect::<Result<_, _>>()?;
+        Ok(definition)
+    }
+}
+
 impl Configuration {
+    pub(crate) fn freeze_publication(&self) -> crate::Result<serde_json::Value> {
+        Ok(serde_json::to_value(FrozenDefinition::freeze(
+            self.0.clone(),
+        ))?)
+    }
+    pub(crate) fn restore_publication(
+        value: serde_json::Value,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let definition = serde_json::from_value::<FrozenDefinition>(value)?.thaw()?;
+        validate_tree(&definition, 0, &mut 0, &mut Default::default())?;
+        if !definition.subagents.is_empty() && definition.shared_model_budget.is_none() {
+            return Err("subagent trees require shared_model_budget on the root".into());
+        }
+        validate_contracts(&definition)?;
+        Ok(Self(definition))
+    }
     pub fn load(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
         let mut definition: Definition = serde_json::from_slice(&std::fs::read(path)?)?;
         validate_tree(&definition, 0, &mut 0, &mut Default::default())?;

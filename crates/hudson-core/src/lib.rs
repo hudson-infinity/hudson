@@ -5,6 +5,7 @@ pub mod credentials;
 pub mod definitions;
 pub mod dispatch;
 pub mod models;
+pub mod publication;
 pub mod recovery;
 pub mod runtime;
 pub mod security;
