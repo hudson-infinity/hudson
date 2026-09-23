@@ -69,7 +69,9 @@ The existing `POST /runs` payload and run inspection/control routes remain the
 same. The API commits the run and scheduling intent together, then returns `202`.
 Acceptance means the request is saved, not that a worker has started or completed
 it. The API makes no model or tool calls in this mode; it does not need a Temporal
-connection. A matching worker publishes saved requests and owns execution. An API
+connection or the configured model/HTTP-tool credential environment variables.
+It publishes the same immutable definitions using an admission-only builder with
+disabled executors. Execution credentials belong in the worker environment. A matching worker publishes saved requests and owns execution. An API
 exit after acceptance does not discard the work. Reuse `request_key` for retries.
 
 `GET /health` reports `mode: "temporal"`. `--temporal-task-queue` requires

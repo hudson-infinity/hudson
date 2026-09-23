@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 id: "developer".into(),
             };
             if let Some(task_queue) = args.temporal_task_queue {
-                let tree = configuration.build_temporal_tree(store, &actor)?;
+                let tree = configuration.build_admission_tree(store, &actor)?;
                 return Ok(routes::scheduled(
                     tree,
                     actor,

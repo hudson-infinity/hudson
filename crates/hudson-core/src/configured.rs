@@ -295,14 +295,42 @@ impl ScheduledTree {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BuildMode {
+    Local,
+    Temporal,
+    Admission,
+}
+
+struct AdmissionModel;
+impl ModelExecutor for AdmissionModel {
+    fn call(
+        &mut self,
+        _: &hudson_harness::ModelRequest,
+    ) -> Result<hudson_harness::ModelResponse, crate::adapters::tools::ExecutionError> {
+        Err(crate::adapters::tools::ExecutionError::Failed(
+            "admission host cannot execute model calls".into(),
+        ))
+    }
+}
+
 fn build(
     definition: Definition,
     store: Store,
     actor: &Actor,
     budget: Option<&SharedBudget>,
     children: &mut ChildRuntimes,
-    deferred: bool,
+    mode: BuildMode,
 ) -> Result<(AgentRuntime, VersionRef), Box<dyn std::error::Error>> {
+    let deferred = mode != BuildMode::Local;
+    let admission = mode == BuildMode::Admission;
+    let credential = |name: &str, required: bool| {
+        if admission {
+            Ok(None)
+        } else {
+            model_key(name, required)
+        }
+    };
     let selected_model = selected_model(&definition)?.to_owned();
     let is_team = !definition.subagents.is_empty();
     let transport_fingerprint = crate::definitions::digest(&(
@@ -313,7 +341,7 @@ fn build(
     ))?;
     let model: Box<dyn ModelExecutor> = match definition.provider.as_str() {
         "" | "openai" => {
-            let key = model_key(
+            let key = credential(
                 definition
                     .api_key_env
                     .as_deref()
@@ -331,7 +359,7 @@ fn build(
             } else {
                 &definition.endpoint
             };
-            let key = model_key(
+            let key = credential(
                 definition
                     .api_key_env
                     .as_deref()
@@ -361,7 +389,7 @@ fn build(
                         None
                     });
             let key = key_env
-                .map(|name| model_key(name, true))
+                .map(|name| credential(name, true))
                 .transpose()?
                 .flatten();
             Box::new(
@@ -370,6 +398,13 @@ fn build(
             )
         }
         _ => return Err("unsupported provider".into()),
+    };
+    // Construct adapters above to retain their configuration validation, then discard
+    // them without any network calls. Admission never retains an executable model.
+    let model: Box<dyn ModelExecutor> = if admission {
+        Box::new(AdmissionModel)
+    } else {
+        model
     };
     let model: Box<dyn ModelExecutor> = if let Some(budget) = budget {
         Box::new(crate::budgets::BudgetedModel::new(
@@ -510,7 +545,7 @@ fn build(
             actor,
             budget,
             children,
-            deferred,
+            mode,
         )?;
         let child = std::sync::Arc::new(std::sync::Mutex::new(child));
         children.insert(child_ref.clone(), child.clone());
@@ -543,13 +578,17 @@ fn build(
     )?;
     let mut executor = HttpTools::new(registry)?;
     for spec in definition.http_tools {
-        let token = spec
-            .token_env
-            .as_ref()
-            .map(|name| {
-                std::env::var(name).map_err(|_| "HTTP tool credential environment variable missing")
-            })
-            .transpose()?;
+        let token = if admission {
+            None
+        } else {
+            spec.token_env
+                .as_ref()
+                .map(|name| {
+                    std::env::var(name)
+                        .map_err(|_| "HTTP tool credential environment variable missing")
+                })
+                .transpose()?
+        };
         executor.bind(&spec.endpoint, token)?;
         let tool = Tool {
             id: format!("{}:{}", definition.name, spec.name),
@@ -617,6 +656,11 @@ fn build(
     store.bind_memory(&actor.workspace_id, &reference, definition.memory)?;
     store.bind_context_policy(&actor.workspace_id, &reference, definition.context.as_ref())?;
     store.bind_model_transport(&actor.workspace_id, &reference, &transport_fingerprint)?;
+    if admission {
+        // Published definitions stay identical, but no HTTP or registered tool
+        // implementation is retained in an admission-only runtime.
+        executor = HttpTools::new(ToolRegistry::new())?;
+    }
     Ok((Runtime::new(store, AgentLoop, model, executor), reference))
 }
 
@@ -767,7 +811,7 @@ impl Configuration {
         store: Store,
         actor: &Actor,
     ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
-        self.build_with_scheduler(store, actor, false)
+        self.build_with_mode(store, actor, BuildMode::Local)
     }
 
     /// Build a tree whose child tools only submit/inspect runs. The caller must
@@ -777,14 +821,24 @@ impl Configuration {
         store: Store,
         actor: &Actor,
     ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
-        self.build_with_scheduler(store, actor, true)
+        self.build_with_mode(store, actor, BuildMode::Temporal)
     }
 
-    fn build_with_scheduler(
+    /// Publish the same Temporal definitions without loading execution credentials.
+    /// Returned runtimes cannot execute models or tools; a worker owns those effects.
+    pub fn build_admission_tree(
         self,
         store: Store,
         actor: &Actor,
-        deferred: bool,
+    ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
+        self.build_with_mode(store, actor, BuildMode::Admission)
+    }
+
+    fn build_with_mode(
+        self,
+        store: Store,
+        actor: &Actor,
+        mode: BuildMode,
     ) -> Result<ConfiguredTree, Box<dyn std::error::Error>> {
         let mut definition = self.0;
         let goal = definition.goal.take();
@@ -796,7 +850,7 @@ impl Configuration {
             actor,
             budget.as_ref(),
             &mut children,
-            deferred,
+            mode,
         )?;
         Ok(ConfiguredTree {
             runtime,
@@ -813,6 +867,88 @@ mod tests {
     fn definition(name: &str) -> Definition {
         serde_json::from_value(serde_json::json!({"name":name,"instructions":"help"})).unwrap()
     }
+    #[test]
+    fn admission_preserves_worker_definitions_without_loading_secrets_or_executors() {
+        use crate::adapters::tools::{Invocation, ToolExecutor};
+        for provider in ["openai", "anthropic", "gemini"] {
+            let key = format!("HUDSON_TEST_ADMISSION_{}", uuid::Uuid::new_v4().simple());
+            assert!(std::env::var(&key).is_err());
+            let config = || {
+                Configuration(serde_json::from_value(serde_json::json!({
+                "name":"admission-root", "instructions":"finish", "provider":provider, "model":"fixture-model",
+                "endpoint":"http://127.0.0.1:1/model", "api_key_env":key,
+                "shared_model_budget":{"group":"admission-budget", "limit":10},
+                "http_tools":[{"name":"lookup", "description":"lookup", "endpoint":"http://127.0.0.1:1/tool",
+                    "token_env":key, "input_schema":{"type":"object"}, "effect":"read"}],
+                "subagents":[{"name":"child", "instructions":"finish", "provider":provider, "model":"fixture-model",
+                    "endpoint":"http://127.0.0.1:1/model", "api_key_env":key}]
+            })).unwrap())
+            };
+            let store = Store::default();
+            let actor = Actor {
+                workspace_id: "workspace".into(),
+                id: "actor".into(),
+            };
+            let mut admission = config()
+                .build_admission_tree(store.clone(), &actor)
+                .unwrap();
+            assert!(config().build_temporal_tree(store.clone(), &actor).is_err());
+            // Only this unique environment name is modified; no shared provider key is used.
+            std::env::set_var(&key, "test-only-secret");
+            let worker = config().build_temporal_tree(store.clone(), &actor);
+            std::env::remove_var(&key);
+            let worker = worker.unwrap();
+            assert_eq!(worker.reference, admission.reference);
+            assert_eq!(worker.bindings(), admission.bindings());
+            assert_eq!(
+                worker.runtime.model_budget_binding(),
+                admission.runtime.model_budget_binding()
+            );
+            let tools = store
+                .read(|data| Ok(data.tools.values().cloned().collect::<Vec<_>>()))
+                .unwrap();
+            for tool in tools {
+                let error = admission
+                    .runtime
+                    .tools
+                    .execute(Invocation {
+                        operation_id: uuid::Uuid::new_v4(),
+                        tool: &tool,
+                        arguments: &serde_json::json!({}),
+                    })
+                    .unwrap_err();
+                assert!(matches!(
+                    error,
+                    crate::adapters::tools::ExecutionError::Failed(_)
+                ));
+            }
+            let run = admission
+                .runtime
+                .submit(
+                    &actor,
+                    admission.reference.clone(),
+                    serde_json::json!("finish"),
+                    None,
+                )
+                .unwrap();
+            let mut view = admission.tick(&actor, run).unwrap();
+            for _ in 0..5 {
+                if view.status.terminal() {
+                    break;
+                }
+                view = admission.tick(&actor, run).unwrap();
+            }
+            assert_eq!(view.status, RunStatus::Failed);
+            assert!(store
+                .operations(&actor, run)
+                .unwrap()
+                .iter()
+                .flat_map(|op| &op.attempts)
+                .any(|attempt| attempt.error.as_deref()
+                    == Some("admission host cannot execute model calls")));
+        }
+    }
+
     #[test]
     fn user_input_reserves_its_tool_name_only_when_enabled() {
         let mut config: Definition = serde_json::from_value(serde_json::json!({
