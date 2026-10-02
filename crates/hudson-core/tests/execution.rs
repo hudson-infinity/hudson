@@ -866,3 +866,38 @@ fn write_with_invalid_returned_receipt_stays_uncertain_without_replay() {
             .any(|op| op.status == OperationStatus::Unknown));
     }
 }
+
+#[test]
+fn event_pages_preserve_run_authority_even_when_empty() {
+    let (mut runtime, _) = setup();
+    let actor = fixtures::actor();
+    let id = runtime
+        .submit(&actor, fixtures::agent_ref(), input(), None)
+        .unwrap();
+    fixtures::drive(&mut runtime, &actor, id).unwrap();
+    let all = runtime.store.events(&actor, id, 0).unwrap();
+    let first = runtime.store.event_page(&actor, id, 0, 1).unwrap();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].sequence, all[0].sequence);
+    assert!(runtime
+        .store
+        .event_page(&actor, id, u64::MAX, 1)
+        .unwrap()
+        .is_empty());
+    let mut foreign = actor.clone();
+    foreign.workspace_id = "other-workspace".into();
+    assert!(matches!(
+        runtime.store.event_page(&foreign, id, u64::MAX, 1),
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        runtime
+            .store
+            .event_page(&actor, uuid::Uuid::new_v4(), u64::MAX, 1),
+        Err(Error::NotFound)
+    ));
+    assert!(matches!(
+        runtime.store.event_page(&actor, id, 0, 0),
+        Err(Error::Invalid(_))
+    ));
+}

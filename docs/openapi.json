@@ -215,7 +215,7 @@
     "/runs/{id}/events": {
       "get": {
         "operationId": "listEvents",
-        "summary": "Read events after an exclusive sequence cursor",
+        "summary": "Read a bounded event page after an exclusive sequence cursor",
         "responses": {
           "200": {
             "description": "Success",
@@ -225,7 +225,8 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/Event"
-                  }
+                  },
+                  "maxItems": 1000
                 }
               }
             }
@@ -265,8 +266,20 @@
               "minimum": 0,
               "default": 0
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100
+            }
           }
-        ]
+        ],
+        "description": "Advance after to the last returned sequence and repeat until an empty page. Default limit is 100 events; maximum is 1000. Response remains a JSON array."
       }
     },
     "/runs/{id}/resume": {

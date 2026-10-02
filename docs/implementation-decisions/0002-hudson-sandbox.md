@@ -10,7 +10,13 @@ Use [hudson-infinity/hudson-sandbox](https://github.com/hudson-infinity/hudson-s
 
 External means a separate project in the same organization, accessed through an explicit service contract. It does not mean a required third-party hosted service. Hudson's core product remains in this monorepo, with an adapter connecting agent operations to the sandbox backend.
 
-Both repositories are currently design-only. This decision records ownership and integration direction; it does not claim that an integration, deployment, or isolation guarantee has been implemented or validated.
+Hudson now implements the harness, durable run state, tool controls, and local HTTP
+API. Hudson Sandbox has its own implementation and public HTTP/JSON contract;
+its internal guest/supervisor gRPC is a separate transport boundary. Hudson's
+`Execution::Sandbox` adapter still rejects execution as unsupported. Neither
+repository's implementation alone establishes an integrated isolation guarantee.
+The local adapter contract and acceptance work is tracked in
+[Hudson issue #17](https://github.com/hudson-infinity/hudson/issues/17).
 
 ## Responsibilities
 

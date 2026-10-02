@@ -176,15 +176,27 @@ impl MemoryStore {
         })
     }
     pub fn events(&self, actor: &Actor, id: Uuid, after: u64) -> Result<Vec<Event>> {
+        self.event_page(actor, id, after, usize::MAX)
+    }
+
+    /// Read an exclusive-cursor page, checking run ownership even for empty pages.
+    /// The PostgreSQL backend still loads its namespace snapshot; only selected
+    /// events are cloned into the returned page.
+    pub fn event_page(
+        &self,
+        actor: &Actor,
+        id: Uuid,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<Event>> {
+        if limit == 0 {
+            return Err(Error::Invalid("event page limit must be positive".into()));
+        }
         self.read(|d| {
             d.run(actor, id)?;
-            Ok(d.events
-                .get(&id)
-                .into_iter()
-                .flatten()
-                .filter(|e| e.sequence > after)
-                .cloned()
-                .collect())
+            let events = d.events.get(&id).map(Vec::as_slice).unwrap_or_default();
+            let start = events.partition_point(|event| event.sequence <= after);
+            Ok(events[start..].iter().take(limit).cloned().collect())
         })
     }
 }

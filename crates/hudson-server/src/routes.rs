@@ -316,16 +316,29 @@ async fn inspect_operation(
 struct Cursor {
     #[serde(default)]
     after: u64,
+    #[serde(default = "default_event_limit")]
+    limit: usize,
+}
+fn default_event_limit() -> usize {
+    100
 }
 async fn events(
     State(app): State<App>,
     Path(id): Path<Uuid>,
     Query(cursor): Query<Cursor>,
 ) -> Result<Json<Value>, ApiError> {
+    if !(1..=1000).contains(&cursor.limit) {
+        return Err(Error::Invalid("event page limit must be between 1 and 1000".into()).into());
+    }
     blocking(move || {
         Ok(Json(
-            serde_json::to_value(app.store.events(&app.actor, id, cursor.after)?)
-                .map_err(Error::from)?,
+            serde_json::to_value(app.store.event_page(
+                &app.actor,
+                id,
+                cursor.after,
+                cursor.limit,
+            )?)
+            .map_err(Error::from)?,
         ))
     })
     .await
@@ -799,6 +812,85 @@ mod tests {
             .pending_schedules(&actor, &agent, &target, 100)
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn event_pages_reconstruct_history_and_reject_invalid_limits() {
+        let app = router().unwrap();
+        let (_, start) = request(
+            &app,
+            "POST",
+            "/runs",
+            json!({"input":{"order_id":"123","action":"lookup"}}),
+        )
+        .await;
+        let id = start["run_id"].as_str().unwrap();
+        until(&app, id, "completed").await;
+        let defaults: Cursor = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(defaults.limit, 100);
+        assert_eq!(defaults.after, 0);
+        let (status, all) = request(
+            &app,
+            "GET",
+            &format!("/runs/{id}/events?limit=1000"),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(all.as_array().unwrap().len() > 2);
+        let (_, default_page) =
+            request(&app, "GET", &format!("/runs/{id}/events"), Value::Null).await;
+        assert_eq!(default_page, all);
+        let mut collected = Vec::new();
+        let mut after = 0;
+        loop {
+            let (status, page) = request(
+                &app,
+                "GET",
+                &format!("/runs/{id}/events?after={after}&limit=2"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            let page = page.as_array().unwrap();
+            assert!(page.len() <= 2);
+            if page.is_empty() {
+                break;
+            }
+            for event in page {
+                let sequence = event["sequence"].as_u64().unwrap();
+                assert!(sequence > after);
+                after = sequence;
+                collected.push(event.clone());
+            }
+        }
+        assert_eq!(Value::Array(collected), all);
+        for limit in [0, 1001] {
+            let (status, _) = request(
+                &app,
+                "GET",
+                &format!("/runs/{id}/events?limit={limit}"),
+                Value::Null,
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+        }
+        let (status, _) = request(
+            &app,
+            "GET",
+            &format!("/runs/{}/events?after={}&limit=1", Uuid::new_v4(), u64::MAX),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (_, page) = request(
+            &app,
+            "GET",
+            &format!("/runs/{id}/events?after={}&limit=1", u64::MAX),
+            Value::Null,
+        )
+        .await;
+        assert_eq!(page, json!([]));
     }
 
     #[tokio::test]
