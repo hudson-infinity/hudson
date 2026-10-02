@@ -7,7 +7,7 @@ import sys
 import threading
 import unittest
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from server import MAX_BYTES, MAX_ENTRIES, MAX_SCAN, ProjectFiles, make_server
 
@@ -89,11 +89,12 @@ class ProjectTests(unittest.TestCase):
         with make_server(self.project, token, 0) as server:
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
+            opener = build_opener(ProxyHandler({}))  # Never inherit external proxy settings.
             def call(path, args, auth=token):
                 request = Request(f'http://127.0.0.1:{server.server_port}{path}',
                                   data=json.dumps(args).encode(),
                                   headers={'Authorization': 'Bearer ' + auth}, method='POST')
-                with urlopen(request, timeout=2) as response:
+                with opener.open(request, timeout=2) as response:
                     return json.load(response)
             try:
                 self.assertEqual(call('/read', {'path': 'src/main.txt'})['content'], 'hello π')
