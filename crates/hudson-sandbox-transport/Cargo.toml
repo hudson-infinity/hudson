@@ -7,11 +7,13 @@ publish.workspace = true
 
 [dependencies]
 hudson-core.workspace = true
-sandbox-client = { git = "https://github.com/hudson-infinity/hudson-sandbox.git", rev = "aa5cef5c51b7c735e6ede82d2c4f6e90f4f4f119" }
+sandbox-client = { git = "https://github.com/hudson-infinity/hudson-sandbox.git", rev = "0a687fe934279549773d0b1b31ac4238e16a73a5" }
 serde_json.workspace = true
 thiserror.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
+hudson-core = { workspace = true, features = ["fixtures"] }
 tokio = { workspace = true, features = ["io-util"] }
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
 rcgen = "=0.14.10"
