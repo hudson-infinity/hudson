@@ -59,3 +59,26 @@ for a completion receipt. A 409 conflict is not admission. A 410 expired respons
 requires reconciliation, even when it retains an operation ID. The admission binder
 rejects other HTTP statuses and different existing identities/status URLs. Persist
 exact request bytes including the absolute command deadline before dispatch.
+
+## Durable request storage foundation
+
+`Store` sandbox binding methods persist an exact JSON request body and immutable
+idempotency key in the existing state document before consuming a single admission
+send intent. The binding belongs to the owning actor's run, its pending Sandbox
+Tool operation, the current admitted attempt, and the operation request digest.
+Registered tools and model operations cannot acquire this authority. Repeated
+preparation preserves the original bytes; changed bodies, metadata, or a key reused
+elsewhere in the workspace conflict. A 202 response binds IDs only. Unknown
+attempts permit receipt reconciliation without granting another send. Terminal
+receipt status is immutable, including destroy: requested cleanup is not confirmed
+cleanup.
+
+This is storage protocol infrastructure for #17, not a working sandbox executor.
+Production dispatch still rejects Sandbox execution. Its tests seed an admitted
+Running Sandbox Tool attempt explicitly; they do not demonstrate runtime approval
+or VM execution. The JSON restart and opt-in PostgreSQL reconnect tests demonstrate
+persistence and fencing. Transport, operator-approved package/command mapping,
+trusted endpoint/project profile binding, and real Linux/KVM validation remain
+required before enabling dispatch. Workspace-wide key uniqueness assumes one
+sandbox project per workspace; a future operator profile must bind that mapping
+and origin durably before using these records for transport.
