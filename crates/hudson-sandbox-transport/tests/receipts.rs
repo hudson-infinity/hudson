@@ -125,3 +125,37 @@ async fn expired_http_and_oversized_results_are_not_completion() {
         Err(Error::Oversized)
     ));
 }
+
+#[tokio::test]
+async fn authoritative_observation_and_unbound_plans_fail_before_network() {
+    // Port 1 has no fixture: these branches must return locally without a GET.
+    let directory = tempfile::tempdir().unwrap();
+    private(&directory.path().join("credential.json"), br#"{"version":1,"project_id":"prj_fixture","name":"test","token":"fixture-only","created_at":1,"expires_at":4102444800}"#);
+    let profile = directory.path().join("client.json");
+    private(
+        &profile,
+        br#"{"version":1,"endpoint":"https://localhost:1","credential_file":"credential.json"}"#,
+    );
+    let observer = QualificationObserver::from_operator_profile(&profile).unwrap();
+    let binding: hudson_core::sandbox_binding::Binding = serde_json::from_value(serde_json::json!({
+        "fence":{"run_id":"00000000-0000-0000-0000-000000000001","operation_id":"00000000-0000-0000-0000-000000000002","attempt_id":"00000000-0000-0000-0000-000000000003"},
+        "operation_request_digest":"fixture", "body":"{}", "profile_fingerprint":"a".repeat(64),
+        "pending":{"run_id":"run","workspace_id":"workspace","step":"execute","idempotency_key":"stable-key-000001","sandbox_id":"sb_original","operation_id":null,"admission_attempted":true},
+        "initial_pending":{"run_id":"run","workspace_id":"workspace","step":"execute","idempotency_key":"stable-key-000001","sandbox_id":"sb_original","operation_id":null,"admission_attempted":false},
+        "terminal":null
+    })).unwrap();
+    assert!(matches!(
+        observer.observe_binding(&binding).await,
+        Err(Error::ProfileIdentityUnavailable)
+    ));
+    assert!(matches!(
+        observer.inspect_unverified(&binding.pending, 4096).await,
+        Err(Error::Reconcile)
+    ));
+    assert!(matches!(
+        observer
+            .inspect_unverified(&binding.initial_pending, 4096)
+            .await,
+        Err(Error::Reconcile)
+    ));
+}
