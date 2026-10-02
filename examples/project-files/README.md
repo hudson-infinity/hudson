@@ -28,6 +28,11 @@ cargo run --locked -p hudson-worker -- \
   --input-file examples/project-files/task.json
 ```
 
+The agent input is a plain prompt string, matching the interactive terminal
+contract; `task.json` supplies that same string to the worker. In an interactive
+terminal session, select this configured agent and ask your project question.
+The service still needs explicit operator startup and authority as above.
+
 The worker command invokes your configured model provider and may incur provider
 charges; the verification command below uses only fake local fixtures and no model.
 The default tool port is 9002; if changing `--port`, change both HTTP endpoints in
