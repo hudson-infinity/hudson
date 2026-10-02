@@ -38,12 +38,14 @@ when claiming a performance improvement. Do not trade correctness for speed.
 
    ```sh
    python3 scripts/check_repository.py
-   node --test .github/scripts/automation.test.cjs
+   node --test .github/scripts/*.test.cjs
    python3 scripts/check.py --database YOUR_TEST_DATABASE --temporal
    ```
 
    `python3 scripts/check.py` is a useful local subset, but skips database and
-   durable Temporal tests. CI also runs actionlint on all workflows.
+   durable Temporal tests. CI also runs actionlint on all workflows and the
+   [Harbor integration tests](integrations/harbor/README.md#local-validation-without-paid-calls)
+   with Python 3.13 and the real worker.
 4. Push your branch. The `Harness checks` workflow runs on every branch push.
    Wait until **every job passes for the latest pushed commit**, then open a PR
    against `main`. Contributors using forks should enable Actions in their fork
@@ -64,6 +66,8 @@ the PR title, so keep it accurate throughout review.
 `main` requires a PR, resolved conversations, an up-to-date branch, and successful
 `CI` and `PR policy` checks. Members with write access may squash-merge their own
 PRs once these requirements pass; approval from another member is not required.
+Dependabot PRs receive a bot approval and squash auto-merge; GitHub waits for the
+same required checks and an up-to-date branch. Failed updates remain unmerged.
 `CI` fails if any validation job fails, is cancelled, or is skipped.
 Administrators and bots have no bypass. Force pushes and branch deletion are
 blocked. Only squash merging is enabled; do not use merge commits or rebase
