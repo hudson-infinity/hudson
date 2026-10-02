@@ -17,6 +17,7 @@ can be loaded at startup or published through authenticated catalog mode. Creden
 | `GET /health` | Read configured/fixture mode and persistence status |
 | `POST /runs` | Submit JSON input to the root agent; optionally deduplicate with `request_key` |
 | `GET /runs/{id}` | Read status, question/approval wait, usage and result |
+| `GET /runs/{id}/schedule` | Inspect durable scheduling publication evidence, without executing work |
 | `GET /runs/{id}/children` | Discover direct children and their statuses |
 | `GET /runs/{id}/events?after=0&limit=100` | Poll a bounded event page after an exclusive sequence cursor |
 | `POST /runs/{id}/resume` | Schedule continuation with the configured executor |
@@ -241,3 +242,22 @@ authenticated API and exclusive bounded event cursors as `follow`, yielding at
 waits for explicit reply/approval actions. It does not create a host, automatically
 retry mutations, upload the working directory, or change configured tool
 authority. See the README's interactive session instructions.
+
+## Scheduling publication receipts
+
+`GET /runs/{id}/schedule` returns `root_run_id`, `status` (`unscheduled`,
+`pending`, or `published`), and nullable `last_attempt_at` / `published_at`
+Unix-millisecond timestamps. Delegated runs inherit the owned root's receipt.
+`unscheduled` means no saved remote scheduling request, as with the local driver;
+`pending` means no acknowledgment was recorded. An interrupted acknowledgment
+can leave the request pending even if Temporal accepted it. The existing pump
+retries publication using the stable workflow identity, without replaying effects.
+
+`published` means the scheduler accepted the workflow; it does not prove a worker
+started, a task completed, or sandbox cleanup succeeded. Inspect the ordinary
+run and operation views for those outcomes. A cancelled run may retain pending
+or published historical intent; its run status governs whether it remains eligible
+for scheduling. Legacy acknowledged snapshots may have no publication timestamp.
+No worker queue, configuration, or credentials appear in this receipt. Inspection
+requires the same authenticated run ownership as other read endpoints and never
+contacts Temporal or mutates a run.
