@@ -1,3 +1,13 @@
+const {execFile} = require('node:child_process');
+const {promisify} = require('node:util');
+const run = promisify(execFile);
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function requestAutoMerge(repo, number, sha) {
+  await run('gh', ['pr', 'merge', String(number), '--repo', `${repo.owner}/${repo.repo}`,
+    '--auto', '--squash', '--match-head-commit', sha]);
+}
+
 function eligible(pr, repository) {
   return pr.state === 'open' && !pr.draft &&
     pr.user?.login === 'dependabot[bot]' && pr.user?.type === 'Bot' &&
@@ -35,12 +45,53 @@ async function enableDependabotAutoMerge(github, repo, number, core, merge = req
   core.info(`Approved #${number}; requested protected squash auto-merge.`);
 }
 
-module.exports = {eligible, enableDependabotAutoMerge};
-const {execFile} = require('node:child_process');
-const {promisify} = require('node:util');
-const run = promisify(execFile);
-
-async function requestAutoMerge(repo, number, sha) {
-  await run('gh', ['pr', 'merge', String(number), '--repo', `${repo.owner}/${repo.repo}`,
-    '--auto', '--squash', '--match-head-commit', sha]);
+async function refreshDependabotBranch(github, repo, number, core, wait = sleep) {
+  const repository = `${repo.owner}/${repo.repo}`;
+  const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
+  if (!eligible(pr, repository)) return;
+  const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
+    ...repo, basehead: `${pr.head.sha}...${pr.base.sha}`,
+  });
+  let current = pr;
+  let updated = false;
+  if (comparison.ahead_by > 0) {
+    try {
+      await github.rest.pulls.updateBranch({
+        ...repo, pull_number: number, expected_head_sha: pr.head.sha,
+      });
+    } catch (error) {
+      if (error.status !== 422 && error.status !== 409) throw error;
+      core.warning(`Cannot update #${number} yet; a conflict or concurrent update needs another attempt.`);
+      return;
+    }
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await wait(2000);
+      current = (await github.rest.pulls.get({...repo, pull_number: number})).data;
+      if (!eligible(current, repository)) return;
+      if (current.head.sha !== pr.head.sha) {
+        updated = true;
+        break;
+      }
+    }
+    if (!updated) throw new Error(`Branch update for #${number} has not completed; the next sweep will retry.`);
+  }
+  // GITHUB_TOKEN branch updates do not trigger push/PR workflows. Dispatch them
+  // explicitly, and recover a missed dispatch if a previous sweep was stopped.
+  const checks = await github.paginate(github.rest.checks.listForRef, {
+    ...repo, ref: current.head.sha, filter: 'latest', per_page: 100,
+  });
+  const names = new Set(checks.filter(check => check.app?.slug === 'github-actions').map(check => check.name));
+  if (updated || !['CI', 'Repository policy and workflows', 'Rust, PostgreSQL, and Temporal'].some(name => names.has(name))) {
+    await github.rest.actions.createWorkflowDispatch({
+      ...repo, workflow_id: 'ci.yml', ref: current.head.ref,
+    });
+  }
+  if (updated || !names.has('PR policy')) {
+    await github.rest.actions.createWorkflowDispatch({
+      ...repo, workflow_id: 'pr-policy.yml', ref: current.head.ref,
+      inputs: {pull_request_number: String(number)},
+    });
+  }
 }
+
+module.exports = {eligible, enableDependabotAutoMerge, refreshDependabotBranch};

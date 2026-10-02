@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {eligible, enableDependabotAutoMerge} = require('./dependabot.cjs');
+const {eligible, enableDependabotAutoMerge, refreshDependabotBranch} = require('./dependabot.cjs');
 
 const repo = {owner: 'hudson-infinity', repo: 'hudson'};
 const repository = 'hudson-infinity/hudson';
@@ -8,7 +8,7 @@ const pr = () => ({
   number: 1, node_id: 'PR_node', state: 'open', draft: false,
   user: {login: 'dependabot[bot]', type: 'Bot'},
   head: {sha: 'abc', ref: 'dependabot/cargo/update', repo: {full_name: repository}},
-  base: {ref: 'main', repo: {full_name: repository}}, auto_merge: null,
+  base: {ref: 'main', sha: 'base', repo: {full_name: repository}}, auto_merge: null,
 });
 
 test('only accepts genuine same-repository Dependabot updates to main', () => {
@@ -79,4 +79,67 @@ test('untrusted PRs perform no review or mutation', async () => {
   await enableDependabotAutoMerge(github, repo, 1, core, merge);
   assert.equal(calls.reviews.length, 0);
   assert.equal(calls.mutations.length, 0);
+});
+
+function refreshFixture({first = pr(), current = {...pr(), head: {...pr().head, sha: 'new'}}, behind = true, checks = [], conflict = false} = {}) {
+  let reads = 0;
+  const calls = {updates: [], dispatches: [], comparisons: [], warnings: []};
+  return {calls, github: {
+    rest: {
+      pulls: {
+        get: async () => ({data: reads++ === 0 ? first : current}),
+        updateBranch: async args => {
+          calls.updates.push(args);
+          if (conflict) throw Object.assign(new Error('conflict'), {status: 422});
+        },
+      },
+      repos: {compareCommitsWithBasehead: async args => {
+        calls.comparisons.push(args);
+        return {data: {ahead_by: behind ? 1 : 0}};
+      }},
+      checks: {listForRef: 'checks'},
+      actions: {createWorkflowDispatch: async args => calls.dispatches.push(args)},
+    },
+    paginate: async () => checks,
+  }, core: {info() {}, warning: value => calls.warnings.push(value)}};
+}
+
+test('behind branches use an expected head and explicitly run both required workflows', async () => {
+  const {github, core, calls} = refreshFixture();
+  await refreshDependabotBranch(github, repo, 1, core, async () => {});
+  assert.equal(calls.comparisons[0].basehead, 'abc...base');
+  assert.equal(calls.updates[0].expected_head_sha, 'abc');
+  assert.deepEqual(calls.dispatches.map(call => call.workflow_id), ['ci.yml', 'pr-policy.yml']);
+  assert.equal(calls.dispatches[1].inputs.pull_request_number, '1');
+  assert.equal(calls.dispatches[0].ref, pr().head.ref);
+});
+
+test('current branches with active checks are not updated or repeatedly dispatched', async () => {
+  const checks = ['Repository policy and workflows', 'PR policy'].map(name => ({name, app: {slug: 'github-actions'}}));
+  const {github, core, calls} = refreshFixture({behind: false, checks});
+  await refreshDependabotBranch(github, repo, 1, core);
+  assert.equal(calls.updates.length, 0);
+  assert.equal(calls.dispatches.length, 0);
+});
+
+test('missing CI dispatches are recovered without changing an up-to-date branch', async () => {
+  const {github, core, calls} = refreshFixture({behind: false});
+  await refreshDependabotBranch(github, repo, 1, core);
+  assert.equal(calls.updates.length, 0);
+  assert.equal(calls.dispatches.length, 2);
+});
+
+test('conflicting branches stay blocked and receive no synthetic success checks', async () => {
+  const {github, core, calls} = refreshFixture({conflict: true});
+  await refreshDependabotBranch(github, repo, 1, core);
+  assert.equal(calls.warnings.length, 1);
+  assert.equal(calls.dispatches.length, 0);
+});
+
+test('branch refresh never touches human or fork PRs', async () => {
+  const {github, core, calls} = refreshFixture({first: {...pr(), user: {login: 'member', type: 'User'}}});
+  await refreshDependabotBranch(github, repo, 1, core);
+  assert.equal(calls.comparisons.length, 0);
+  assert.equal(calls.updates.length, 0);
+  assert.equal(calls.dispatches.length, 0);
 });

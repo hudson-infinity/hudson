@@ -3,6 +3,10 @@ name: Dependabot auto-merge
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -14,13 +18,15 @@ concurrency:
 
 jobs:
   approve:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]'
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.user.login == 'dependabot[bot]'
     name: Approve Dependabot and enable squash auto-merge
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
+      actions: write
+      checks: read
     steps:
       # Never check out or execute a dependency PR with this write token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,9 +38,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         with:
           script: |
-            const {enableDependabotAutoMerge} = require('./.github/scripts/dependabot.cjs');
+            const {enableDependabotAutoMerge, refreshDependabotBranch} = require('./.github/scripts/dependabot.cjs');
             const prs = context.payload.pull_request ? [context.payload.pull_request] :
               await github.paginate(github.rest.pulls.list, {...context.repo, state: 'open', base: 'main', per_page: 100});
             for (const pr of prs) {
+              if (context.eventName !== 'pull_request_target') {
+                await refreshDependabotBranch(github, context.repo, pr.number, core);
+              }
               await enableDependabotAutoMerge(github, context.repo, pr.number, core);
             }

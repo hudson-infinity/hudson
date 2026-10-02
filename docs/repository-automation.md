@@ -64,8 +64,13 @@ queues it until branch requirements pass. The workflow never bypasses checks
 or executes code from the dependency branch.
 Repeated events preserve an existing approval and auto-merge request.
 
-The strict up-to-date requirement remains enabled. Dependabot's default automatic
-rebasing updates branches when main advances; new commits must pass CI again.
+The strict up-to-date requirement remains enabled. On main pushes and every
+15 minutes, the workflow updates eligible branches with missing main commits
+using GitHub's branch-update API and an expected head SHA. Conflicts stay blocked.
+The periodic sweep also covers merges whose token suppresses push workflows.
+Because `GITHUB_TOKEN` updates do not trigger ordinary push/PR workflows, it
+explicitly dispatches CI and PR-title checks on updated branches. An interrupted
+dispatch is recovered on the next sweep. New commits must pass CI again.
 Harbor's real-worker fixture tests run in CI so Python dependency updates are
 tested alongside Rust updates. API-breaking updates need a compatibility fix
 before their queued merge can proceed.
