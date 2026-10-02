@@ -14,6 +14,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ci:
+    name: CI
+    needs: [integration]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the full integration check to pass
+        env:
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+        run: |
+          if [ "$INTEGRATION_RESULT" != success ]; then
+            echo "Full integration check did not succeed: $INTEGRATION_RESULT"
+            exit 1
+          fi
   integration:
     name: Rust, PostgreSQL, and Temporal
     runs-on: ubuntu-24.04
