@@ -20,8 +20,8 @@ keeping default workflow token permissions read-only. It verifies persisted
 merge settings and the ruleset. No administrator or bot bypass is configured.
 
 Required checks are `CI` and `PR policy`, restricted to the GitHub Actions app.
-`CI` waits for **Repository policy and workflows** and **Rust, PostgreSQL, and
-Temporal** and rejects any result other than success. When adding a validation
+`CI` waits for **Repository policy and workflows**, **Harbor integration**, and
+**Rust, PostgreSQL, and Temporal** and rejects any result other than success. When adding a validation
 job, add it to `CI.needs`. Keep required check names stable or update the ruleset
 at the same time. `PR policy` validates the title that becomes the squash commit.
 Branches must be current with `main`, and conversations must be resolved. Members
@@ -47,6 +47,38 @@ never checks out a PR head, executes PR code, or inserts titles/bodies into shel
 commands. Keep this boundary when changing the bot. Dependabot sends weekly
 updates for Cargo, GitHub Actions, and the Harbor Python integration; it uses the
 same checks and merge requirements as human changes.
+
+## Dependabot approval and auto-merge
+
+Native auto-merge is enabled in the repository settings. The Dependabot workflow
+approves open, non-draft PRs authored by `dependabot[bot]` whose source and target
+belong to this repository and whose target is `main`. It covers all configured
+update types, including major versions. Approval records permission to merge
+after validation; a failing update remains blocked by required CI.
+
+The workflow runs only trusted default-branch code under `pull_request_target`.
+It pins each approval to a commit, rechecks the PR after approval, and enables
+GitHub's native **squash** auto-merge through `gh pr merge --auto --squash` with
+an expected commit SHA. GitHub merges an already eligible PR immediately or
+queues it until branch requirements pass. The workflow never bypasses checks
+or executes code from the dependency branch.
+Repeated events preserve an existing approval and auto-merge request.
+
+The strict up-to-date requirement remains enabled. Dependabot's default automatic
+rebasing updates branches when main advances; new commits must pass CI again.
+Harbor's real-worker fixture tests run in CI so Python dependency updates are
+tested alongside Rust updates. API-breaking updates need a compatibility fix
+before their queued merge can proceed.
+
+After installing the workflow, process existing Dependabot PRs with:
+
+```sh
+gh workflow run dependabot-automerge.yml --ref main
+```
+
+This reuses the same bot identity and repository checks as new PR events and
+leaves human PRs untouched. To opt an individual update out, disable its native
+auto-merge in GitHub; a later Dependabot update event will opt it in again.
 
 ## License and versions
 
