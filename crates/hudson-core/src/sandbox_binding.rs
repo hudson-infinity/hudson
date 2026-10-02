@@ -22,6 +22,8 @@ pub struct Binding {
     pub fence: Fence,
     /// Exact UTF-8 JSON bytes, including the caller's absolute deadline.
     pub body: String,
+    /// SHA256 of canonical trusted operator origin+project, excluding credentials.
+    pub profile_fingerprint: String,
     pub pending: PendingOperation,
     pub initial_pending: PendingOperation,
     pub terminal: Option<String>,
@@ -81,15 +83,26 @@ fn authorized(d: &Data, actor: &Actor, fence: &Fence, sending: bool) -> Result<(
 }
 impl Store {
     /// Persist before any transport send. Identical retries preserve the original bytes.
+    /// The trusted worker constructor must derive `profile_fingerprint` from canonical
+    /// operator origin+project (never token or agent label). This store cannot verify
+    /// provenance; future transport must compare it with the actual SDK client identity.
     pub fn prepare_sandbox_request(
         &self,
         actor: &Actor,
         fence: Fence,
         pending: PendingOperation,
         body: String,
+        profile_fingerprint: &str,
     ) -> Result<Binding> {
         self.transact(|d| {
             authorized(d, actor, &fence, true)?;
+            if profile_fingerprint.len() != 64
+                || !profile_fingerprint
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(Error::Invalid("invalid trusted profile fingerprint".into()));
+            }
             if pending.run_id != fence.run_id.to_string()
                 || pending.workspace_id != actor.workspace_id
                 || pending.admission_attempted
@@ -109,22 +122,24 @@ impl Store {
                 if existing.fence == fence
                     && existing.initial_pending == pending
                     && existing.body == body
+                    && existing.profile_fingerprint == profile_fingerprint
                 {
                     return Ok(existing.clone());
                 }
                 return Err(Error::Conflict("sandbox request is immutable".into()));
             }
             if d.sandbox_bindings.values().any(|b| {
-                b.pending.workspace_id == actor.workspace_id
+                b.profile_fingerprint == profile_fingerprint
                     && b.pending.idempotency_key == pending.idempotency_key
             }) {
                 return Err(Error::Conflict(
-                    "sandbox key already bound in workspace".into(),
+                    "sandbox key already bound to backend profile".into(),
                 ));
             }
             let binding = Binding {
                 fence,
                 body,
+                profile_fingerprint: profile_fingerprint.into(),
                 initial_pending: pending.clone(),
                 pending,
                 terminal: None,
@@ -304,6 +319,7 @@ mod tests {
         };
         (store, actor, fence, pending)
     }
+    const PROFILE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fn prepare(store: &Store, actor: &Actor, fence: &Fence, pending: &PendingOperation) -> Binding {
         store
             .prepare_sandbox_request(
@@ -311,6 +327,7 @@ mod tests {
                 fence.clone(),
                 pending.clone(),
                 "{ \"deadline\": 123 }".into(),
+                PROFILE,
             )
             .unwrap()
     }
@@ -323,7 +340,8 @@ mod tests {
                 &actor,
                 fence.clone(),
                 pending.clone(),
-                "{\"deadline\":123}".into()
+                "{\"deadline\":123}".into(),
+                PROFILE
             )
             .is_err());
         let mut wrong = actor.clone();
@@ -338,7 +356,7 @@ mod tests {
         duplicate.step = Step::Execute;
         duplicate.sandbox_id = Some("sandbox".into());
         assert!(store
-            .prepare_sandbox_request(&actor, fence.clone(), duplicate, "{}".into())
+            .prepare_sandbox_request(&actor, fence.clone(), duplicate, "{}".into(), PROFILE)
             .is_err());
         store
             .begin_sandbox_admission(&actor, &fence, Step::Create)
@@ -351,6 +369,83 @@ mod tests {
                 .pending
                 .admission_attempted
         );
+    }
+    #[test]
+    fn profile_identity_is_immutable_and_keys_span_shared_workspaces() {
+        let (store, actor, fence, pending) = seeded(Store::default());
+        prepare(&store, &actor, &fence, &pending);
+        let restarted = Store::staging(
+            store
+                .read(|d| Ok(serde_json::from_value(serde_json::to_value(d)?)?))
+                .unwrap(),
+        );
+        let other_profile = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(restarted
+            .prepare_sandbox_request(
+                &actor,
+                fence.clone(),
+                pending.clone(),
+                "{ \"deadline\": 123 }".into(),
+                other_profile
+            )
+            .is_err());
+        let mut other_actor = actor.clone();
+        other_actor.workspace_id = "other-workspace".into();
+        let other_fence = Fence {
+            run_id: Uuid::new_v4(),
+            operation_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+        };
+        restarted
+            .transact(|d| {
+                let mut run = d.runs[&fence.run_id].clone();
+                run.meta.id = other_fence.run_id;
+                run.meta.workspace_id = other_actor.workspace_id.clone();
+                run.pending_operations = vec![other_fence.operation_id];
+                let mut op = d.operations[&fence.operation_id].clone();
+                op.meta.id = other_fence.operation_id;
+                op.meta.workspace_id = other_actor.workspace_id.clone();
+                op.run_id = other_fence.run_id;
+                op.attempts.last_mut().unwrap().id = other_fence.attempt_id;
+                let OperationRequest::Tool { tool_ref, .. } = &op.request else {
+                    unreachable!()
+                };
+                let mut tool = d.tools[&(actor.workspace_id.clone(), tool_ref.clone())].clone();
+                tool.workspace_id = other_actor.workspace_id.clone();
+                d.tools
+                    .insert((other_actor.workspace_id.clone(), tool_ref.clone()), tool);
+                op.request_digest = definitions::digest(&(
+                    other_fence.operation_id,
+                    other_fence.run_id,
+                    &other_actor.workspace_id,
+                    &op.request,
+                ))?;
+                d.runs.insert(other_fence.run_id, run);
+                d.operations.insert(other_fence.operation_id, op);
+                Ok(())
+            })
+            .unwrap();
+        let mut other_pending = pending;
+        other_pending.run_id = other_fence.run_id.to_string();
+        other_pending.workspace_id = other_actor.workspace_id.clone();
+        assert!(restarted
+            .prepare_sandbox_request(
+                &other_actor,
+                other_fence.clone(),
+                other_pending.clone(),
+                "{}".into(),
+                PROFILE
+            )
+            .is_err());
+        assert!(restarted
+            .prepare_sandbox_request(
+                &other_actor,
+                other_fence,
+                other_pending,
+                "{}".into(),
+                other_profile
+            )
+            .is_ok());
     }
     #[test]
     fn no_authority_from_registered_tool_or_changed_request() {
@@ -371,7 +466,7 @@ mod tests {
             })
             .unwrap();
         assert!(store
-            .prepare_sandbox_request(&actor, fence.clone(), pending.clone(), "{}".into())
+            .prepare_sandbox_request(&actor, fence.clone(), pending.clone(), "{}".into(), PROFILE)
             .is_err());
         let (store, actor, fence, pending) = seeded(Store::default());
         store
@@ -384,7 +479,7 @@ mod tests {
             })
             .unwrap();
         assert!(store
-            .prepare_sandbox_request(&actor, fence, pending, "{}".into())
+            .prepare_sandbox_request(&actor, fence, pending, "{}".into(), PROFILE)
             .is_err());
     }
     #[test]
