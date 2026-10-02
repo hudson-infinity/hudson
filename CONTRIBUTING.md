@@ -61,9 +61,10 @@ the PR title, so keep it accurate throughout review.
 
 ## Review and merge
 
-`main` requires a PR, one approving review, resolved conversations, an up-to-date
-branch, and successful `CI` and `PR policy` checks. New pushes invalidate stale
-approvals. `CI` fails if any validation job fails, is cancelled, or is skipped.
+`main` requires a PR, resolved conversations, an up-to-date branch, and successful
+`CI` and `PR policy` checks. Members with write access may squash-merge their own
+PRs once these requirements pass; approval from another member is not required.
+`CI` fails if any validation job fails, is cancelled, or is skipped.
 Administrators and bots have no bypass. Force pushes and branch deletion are
 blocked. Only squash merging is enabled; do not use merge commits or rebase
 merges. Maintainers review correctness, tests, resource bounds, and compatibility.
@@ -80,8 +81,9 @@ feature PRs. `fix` and `perf` produce patch releases, `feat` produces minor
 releases, and breaking changes produce major releases (including before 1.0).
 Documentation and maintenance changes join the next release.
 
-Release PRs receive the same required checks and review as other PRs. Once the
-release PR is squash-merged and `main` CI passes, the bot creates its tag and
+Release PRs receive the same required checks as other PRs, with no required
+approval from another member. Once the release PR is squash-merged and `main`
+CI passes, the bot creates its tag and
 GitHub release. Crates and Python packages are not automatically published.
 See [repository automation](docs/repository-automation.md) for setup and recovery.
 

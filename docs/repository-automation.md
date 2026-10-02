@@ -24,8 +24,9 @@ Required checks are `CI` and `PR policy`, restricted to the GitHub Actions app.
 Temporal** and rejects any result other than success. When adding a validation
 job, add it to `CI.needs`. Keep required check names stable or update the ruleset
 at the same time. `PR policy` validates the title that becomes the squash commit.
-Branches must be current with `main`; one review and resolved conversations are
-required. Never disable these checks to get a release or dependency update in.
+Branches must be current with `main`, and conversations must be resolved. Members
+with write access can squash-merge their own PRs without another member's
+approval. Never disable required checks to get a release or dependency update in.
 
 CI runs on all branch pushes so contributors can verify the latest commit before
 opening a PR. It runs again for the proposed PR merge. A local subset cannot
@@ -45,7 +46,7 @@ The privileged `pull_request_target` job checks out only the default branch. It
 never checks out a PR head, executes PR code, or inserts titles/bodies into shell
 commands. Keep this boundary when changing the bot. Dependabot sends weekly
 updates for Cargo, GitHub Actions, and the Harbor Python integration; it uses the
-same checks and review requirements as human changes.
+same checks and merge requirements as human changes.
 
 ## License and versions
 
@@ -60,7 +61,8 @@ after successful push CI on current `main`. It updates one release PR for the
 whole repository. Conventional squash titles determine SemVer bumps: features
 are minor, fixes/performance are patch, and breaking changes are major. The
 initial manifest is `0.1.0`; the bootstrap SHA excludes older, nonconventional
-history. Versions and changelogs change only through the reviewed release PR.
+history. Versions and changelogs change only through the release PR, which must
+pass the same merge requirements as other changes.
 
 The `simple` strategy plus TOML extra-file updaters preserves inherited
 `version.workspace = true`. It updates `Cargo.toml`, the six local packages in

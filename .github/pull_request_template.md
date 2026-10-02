@@ -14,5 +14,5 @@ For performance changes, include the workload and measured before/after results.
 - [ ] Resource limits, security, cancellation, and recovery behavior are preserved.
 - [ ] Contributions and new dependencies comply with the Apache-2.0 policy.
 
-Maintainers: wait for all required checks and review, resolve conversations, and
-use **Squash and merge**.
+Maintainers: wait for all required checks, resolve conversations, and use
+**Squash and merge**. Approval from another member is not required.
