@@ -24,9 +24,32 @@ jobs:
       - name: Check licensing and version consistency
         run: python3 scripts/check_repository.py
       - name: Test community automation
-        run: node --test .github/scripts/automation.test.cjs
+        run: node --test .github/scripts/*.test.cjs
       - name: Validate GitHub workflows
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  harbor:
+    name: Harbor integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install Harbor integration and its declared dependencies
+        run: python -m pip install ./integrations/harbor
+      - name: Build the real worker for the integration tests
+        run: cargo build --locked -p hudson-worker
+      - name: Test Harbor adapter and verifiers with local fixtures
+        env:
+          HUDSON_WORKER: ${{ github.workspace }}/target/debug/hudson-worker
+        run: python -m unittest discover -s integrations/harbor/tests -v
 
   integration:
     name: Rust, PostgreSQL, and Temporal
@@ -81,7 +104,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [repository, integration]
+    needs: [repository, harbor, integration]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
