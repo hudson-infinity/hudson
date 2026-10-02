@@ -43,3 +43,12 @@ redaction/auth setup, explicit operator registration and enforced policy checks,
 output/result attachment, cancellation targets, cleanup evidence, and local mock
 acceptance followed by real Linux/KVM validation. The JSON roundtrip tests represent serialized recovery plans, not implemented durable storage. The unit tests cover restart,
 lost response, mismatched receipts and expired/unknown status without VM claims.
+
+The receipt's omitted `response_expired` means false in the pinned OpenAPI schema;
+this matches the generated SDK default. The receipt cannot bind a Hudson workspace
+or run because those fields are not in the public operation response. The future
+store must enforce that binding and immutable request ownership; public Rust plan
+fields are serialization data, not an authority boundary. Structural validation
+rejects empty identities/keys and execute/destroy plans without a sandbox identity.
+Reproduce the selected schema with `scripts/extract-sandbox-operation-schema.py`
+against the verified pinned repository's `api/openapi.json`.

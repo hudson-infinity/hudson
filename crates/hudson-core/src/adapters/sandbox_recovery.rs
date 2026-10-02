@@ -1,4 +1,4 @@
-//! Durable sandbox orchestration decisions, independent of transport.
+//! Serialized sandbox recovery decisions, independent of transport and storage.
 //! Requests must be persisted before admission; unknown outcomes never authorize replay.
 use serde::{Deserialize, Serialize};
 
@@ -47,7 +47,26 @@ pub enum Decision {
 }
 
 impl PendingOperation {
+    /// This checks structural consistency only. Ownership and immutable request binding
+    /// must be checked by the durable store before calling this method.
     pub fn decision(&self, receipt: Option<&Receipt>) -> Decision {
+        if self.run_id.trim().is_empty()
+            || self.workspace_id.trim().is_empty()
+            || self.idempotency_key.trim().is_empty()
+            || self
+                .operation_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty())
+            || self
+                .sandbox_id
+                .as_ref()
+                .is_some_and(|id| id.trim().is_empty())
+            || (self.step != Step::Create && self.sandbox_id.is_none())
+            || (self.operation_id.is_some()
+                && (!self.admission_attempted || self.sandbox_id.is_none()))
+        {
+            return Decision::Reconcile;
+        }
         let Some(receipt) = receipt else {
             return match (&self.operation_id, self.admission_attempted) {
                 (Some(id), _) => Decision::Inspect {
@@ -139,6 +158,25 @@ mod tests {
             }
         );
         assert_eq!(restored.idempotency_key, original.idempotency_key);
+    }
+    #[test]
+    fn malformed_plans_never_admit() {
+        for field in 0..5 {
+            let mut p = pending();
+            p.operation_id = None;
+            p.admission_attempted = false;
+            match field {
+                0 => p.run_id.clear(),
+                1 => p.workspace_id.clear(),
+                2 => p.idempotency_key.clear(),
+                3 => p.sandbox_id = None,
+                _ => p.sandbox_id = Some(String::new()),
+            }
+            assert_eq!(p.decision(None), Decision::Reconcile);
+        }
+        let mut p = pending();
+        p.admission_attempted = false;
+        assert_eq!(p.decision(Some(&receipt())), Decision::Reconcile);
     }
     #[test]
     fn lost_admission_response_cannot_replay() {
