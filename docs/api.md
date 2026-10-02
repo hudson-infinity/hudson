@@ -232,3 +232,12 @@ Workers started with `hudson-temporal --published ... worker` load the saved age
 and execution credentials independently. Never mix configured and published
 workers on the same queue. The live OpenAPI document shows publication routes only
 in catalog mode and requires `agent_ref` and `request_key` there.
+
+### Interactive terminal operator
+
+`hudson` (no subcommand) opens a terminal prompt; `hudson session --agent NAME
+--agent-version VERSION` selects a published agent. This client uses the same
+authenticated API and exclusive bounded event cursors as `follow`, yielding at
+waits for explicit reply/approval actions. It does not create a host, automatically
+retry mutations, upload the working directory, or change configured tool
+authority. See the README's interactive session instructions.

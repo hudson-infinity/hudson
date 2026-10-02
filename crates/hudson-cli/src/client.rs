@@ -38,7 +38,8 @@ pub fn execute(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let base = args.url.trim_end_matches('/');
-    let response = match args.command {
+    let response = match args.command.unwrap_or(Command::Session(Default::default())) {
+        Command::Session(session) => return crate::session::run(&client, base, session),
         Command::Follow {
             run_id,
             after,
@@ -157,7 +158,7 @@ fn submission(start: Start) -> Result<Value, Box<dyn std::error::Error>> {
     Ok(body)
 }
 
-fn definition_name(name: &str) -> Result<&str, Box<dyn std::error::Error>> {
+pub(crate) fn definition_name(name: &str) -> Result<&str, Box<dyn std::error::Error>> {
     if name.is_empty()
         || name.len() > 64
         || !name

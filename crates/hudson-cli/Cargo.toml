@@ -7,8 +7,17 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+uuid.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "hudson"
+path = "src/bin/hudson.rs"
+
+[[bin]]
+name = "hudson-cli"
+path = "src/main.rs"
