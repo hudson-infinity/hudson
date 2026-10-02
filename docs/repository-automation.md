@@ -82,8 +82,8 @@ gh workflow run dependabot-automerge.yml --ref main
 ```
 
 This reuses the same bot identity and repository checks as new PR events and
-leaves human PRs untouched. To opt an individual update out, disable its native
-auto-merge in GitHub; a later Dependabot update event will opt it in again.
+leaves human PRs untouched. To pause automatic handling of an individual update,
+mark its PR as draft. Marking it ready for review resumes automatic handling.
 
 ## License and versions
 

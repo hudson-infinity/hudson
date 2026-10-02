@@ -43,7 +43,7 @@ jobs:
               await github.paginate(github.rest.pulls.list, {...context.repo, state: 'open', base: 'main', per_page: 100});
             for (const pr of prs) {
               if (context.eventName !== 'pull_request_target') {
-                await refreshDependabotBranch(github, context.repo, pr.number, core);
+                if (!await refreshDependabotBranch(github, context.repo, pr.number, core)) continue;
               }
               await enableDependabotAutoMerge(github, context.repo, pr.number, core);
             }

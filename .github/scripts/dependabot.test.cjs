@@ -131,7 +131,14 @@ test('missing CI dispatches are recovered without changing an up-to-date branch'
 
 test('conflicting branches stay blocked and receive no synthetic success checks', async () => {
   const {github, core, calls} = refreshFixture({conflict: true});
-  await refreshDependabotBranch(github, repo, 1, core);
+  assert.equal(await refreshDependabotBranch(github, repo, 1, core), false);
+  assert.equal(calls.warnings.length, 1);
+  assert.equal(calls.dispatches.length, 0);
+});
+
+test('an incomplete branch update is retried without blocking the remaining PRs', async () => {
+  const {github, core, calls} = refreshFixture({current: pr()});
+  assert.equal(await refreshDependabotBranch(github, repo, 1, core, async () => {}), false);
   assert.equal(calls.warnings.length, 1);
   assert.equal(calls.dispatches.length, 0);
 });

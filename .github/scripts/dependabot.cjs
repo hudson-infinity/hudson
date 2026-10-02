@@ -48,7 +48,7 @@ async function enableDependabotAutoMerge(github, repo, number, core, merge = req
 async function refreshDependabotBranch(github, repo, number, core, wait = sleep) {
   const repository = `${repo.owner}/${repo.repo}`;
   const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
-  if (!eligible(pr, repository)) return;
+  if (!eligible(pr, repository)) return false;
   const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
     ...repo, basehead: `${pr.head.sha}...${pr.base.sha}`,
   });
@@ -62,18 +62,21 @@ async function refreshDependabotBranch(github, repo, number, core, wait = sleep)
     } catch (error) {
       if (error.status !== 422 && error.status !== 409) throw error;
       core.warning(`Cannot update #${number} yet; a conflict or concurrent update needs another attempt.`);
-      return;
+      return false;
     }
     for (let attempt = 0; attempt < 15; attempt++) {
       await wait(2000);
       current = (await github.rest.pulls.get({...repo, pull_number: number})).data;
-      if (!eligible(current, repository)) return;
+      if (!eligible(current, repository)) return false;
       if (current.head.sha !== pr.head.sha) {
         updated = true;
         break;
       }
     }
-    if (!updated) throw new Error(`Branch update for #${number} has not completed; the next sweep will retry.`);
+    if (!updated) {
+      core.warning(`Branch update for #${number} has not completed; the next sweep will retry.`);
+      return false;
+    }
   }
   // GITHUB_TOKEN branch updates do not trigger push/PR workflows. Dispatch them
   // explicitly, and recover a missed dispatch if a previous sweep was stopped.
@@ -92,6 +95,7 @@ async function refreshDependabotBranch(github, repo, number, core, wait = sleep)
       inputs: {pull_request_number: String(number)},
     });
   }
+  return true;
 }
 
 module.exports = {eligible, enableDependabotAutoMerge, refreshDependabotBranch};
