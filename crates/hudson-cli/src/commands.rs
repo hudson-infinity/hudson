@@ -9,10 +9,12 @@ pub struct Args {
     #[arg(long)]
     pub api_token_env: Option<String>,
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 #[derive(Subcommand)]
 pub enum Command {
+    /// Interactive terminal session using an already running configured host.
+    Session(Session),
     Health,
     Capabilities,
     /// Publish a JSON request containing request_key and tool.
@@ -105,4 +107,13 @@ pub struct Start {
     pub refund: bool,
     #[arg(long)]
     pub request_key: Option<String>,
+}
+
+#[derive(clap::Args, Default)]
+pub struct Session {
+    /// Select an immutable published agent instead of the startup-configured agent.
+    #[arg(long, requires = "agent_version")]
+    pub agent: Option<String>,
+    #[arg(long, requires = "agent")]
+    pub agent_version: Option<u32>,
 }

@@ -86,9 +86,24 @@ fn emit(output: &mut impl Write, record: Value) -> Result<(), String> {
 }
 
 pub fn run(client: &Client, base: &str, run_id: &str, options: Options) -> Result<(), String> {
+    let mut output = std::io::stdout().lock();
+    observe(client, base, run_id, options, false, |record| {
+        emit(&mut output, record)
+    })
+    .map(|_| ())
+}
+
+/// Shared bounded observer; interactive sessions yield at waits without taking action.
+pub fn observe(
+    client: &Client,
+    base: &str,
+    run_id: &str,
+    options: Options,
+    stop_on_wait: bool,
+    mut output: impl FnMut(Value) -> Result<(), String>,
+) -> Result<u64, String> {
     let mut after = options.after;
     let mut previous_run = Value::Null;
-    let mut output = std::io::stdout().lock();
     let result = (|| {
         loop {
             // Observe status BEFORE draining: terminal status guarantees its
@@ -129,19 +144,17 @@ pub fn run(client: &Client, base: &str, run_id: &str, options: Options) -> Resul
                 }
                 for event in events {
                     let sequence = event["sequence"].as_u64().expect("validated sequence");
-                    emit(
-                        &mut output,
-                        json!({"type":"event", "after":sequence, "event":event}),
-                    )?;
+                    output(json!({"type":"event", "after":sequence, "event":event}))?;
                     after = sequence;
                 }
             }
             if run != previous_run {
-                emit(&mut output, json!({"type":"run", "after":after, "run":run}))?;
+                output(json!({"type":"run", "after":after, "run":run}))?;
                 previous_run = run.clone();
             }
             match status {
-                "completed" => return Ok(()),
+                "completed" => return Ok(after),
+                "waiting" if stop_on_wait => return Ok(after),
                 "failed" | "cancelled" => return Err(format!("run {status}")),
                 _ => std::thread::sleep(Duration::from_millis(options.poll_ms)),
             }
