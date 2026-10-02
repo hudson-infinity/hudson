@@ -59,7 +59,8 @@ impl PendingOperation {
     /// Bind a successful admission response after the original send intent was persisted.
     /// Error bodies (including 409/410) never establish admission or completion.
     pub fn admitted(&self, http_status: u16, body: &Admission) -> Option<Self> {
-        if http_status != 202
+        if (self.step != Step::Create && self.sandbox_id.is_none())
+            || http_status != 202
             || !self.admission_attempted
             || body.sandbox_id.is_empty()
             || body.operation_id.is_empty()
@@ -224,6 +225,28 @@ mod tests {
         let mut wrong = body.clone();
         wrong.sandbox_id = "other".into();
         assert!(p.admitted(202, &wrong).is_none());
+    }
+    #[test]
+    fn admission_cannot_invent_original_execute_or_destroy_target() {
+        let body = Admission {
+            sandbox_id: "sandbox".into(),
+            operation_id: "operation".into(),
+            status: "queued".into(),
+            status_url: "/v1/operations/operation".into(),
+        };
+        for step in [Step::Execute, Step::Destroy] {
+            let mut p = pending();
+            p.step = step;
+            p.sandbox_id = None;
+            p.operation_id = None;
+            assert_eq!(p.decision(None), Decision::Reconcile);
+            assert!(p.admitted(202, &body).is_none());
+        }
+        let mut create = pending();
+        create.step = Step::Create;
+        create.sandbox_id = None;
+        create.operation_id = None;
+        assert!(create.admitted(202, &body).is_some());
     }
     #[test]
     fn malformed_plans_never_admit() {
