@@ -1,8 +1,14 @@
-//! Pinned public SDK qualification. No mutation dispatch or runtime integration.
-//! Observations lack verified operator-profile identity and are not completion evidence.
+//! Pinned public SDK transport foundation. No mutation dispatch or runtime integration.
+//! Declared profile verification prevents configuration drift; backend auth still owns authority.
 use hudson_core::adapters::sandbox_recovery::{Decision, PendingOperation, Receipt, Step};
+use hudson_core::{
+    models::Actor,
+    sandbox_binding::{Binding, Fence},
+    storage::Store,
+};
 pub use sandbox_client::models::{CommandInput, CreateRequest, DestroyRequest};
 use sandbox_client::{requests::GetOperation, Client};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 #[derive(Debug, thiserror::Error)]
@@ -11,8 +17,10 @@ pub enum Error {
     Request,
     #[error("original operation requires reconciliation")]
     Reconcile,
-    #[error("SDK cannot verify the durable operator profile identity")]
-    ProfileIdentityUnavailable,
+    #[error("operator profile declaration differs from the durable binding")]
+    ProfileMismatch,
+    #[error(transparent)]
+    Store(#[from] hudson_core::Error),
     #[error("observation exceeds caller payload bound")]
     Oversized,
     #[error(transparent)]
@@ -63,8 +71,8 @@ impl PreparedBody {
     }
 }
 
-/// Non-authoritative SDK protocol probe. This does not establish endpoint/project binding.
-/// Do not attach its results as durable completion or cleanup evidence.
+/// SDK protocol probe and owned receipt observer. Profile declaration is not authorization.
+/// Unverified probes never establish durable completion or cleanup evidence.
 pub struct QualificationObserver {
     client: Client,
 }
@@ -75,6 +83,12 @@ pub struct ProbeObservation {
     pub error: Option<serde_json::Value>,
     pub output_status: Option<String>,
 }
+/// An owned Store receipt recorded after matching the constructed client declaration.
+/// This establishes operation status only, never guest policy or agent task success.
+pub struct BoundObservation {
+    pub binding: Binding,
+    pub observation: ProbeObservation,
+}
 impl QualificationObserver {
     /// Reads trusted private SDK configuration; no agent arguments or insecure TLS switch.
     pub fn from_operator_profile(path: &Path) -> Result<Self, Error> {
@@ -82,20 +96,76 @@ impl QualificationObserver {
             client: Client::from_config(path)?,
         })
     }
-    /// Fail closed before polling: the pinned SDK does not expose actual profile identity.
+    /// Canonical representation: SHA256 of UTF-8 serde JSON array [origin, project_id].
+    /// Origin uses the SDK's validated URL normalization; no token/CA/path is included.
+    /// This pins a trusted local declaration, not server authorization evidence.
+    pub fn profile_fingerprint(&self) -> Result<String, Error> {
+        let identity = self.client.identity();
+        let bytes = serde_json::to_vec(&[identity.origin, identity.project_id])
+            .map_err(|_| Error::Request)?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+    /// Persist SDK-canonical bytes with the actual constructed client's declaration.
+    /// No external request is sent and no admission intent is consumed.
+    pub fn prepare_request(
+        &self,
+        store: &Store,
+        actor: &Actor,
+        fence: Fence,
+        pending: PendingOperation,
+        body: &PreparedBody,
+    ) -> Result<Binding, Error> {
+        if pending.step != body.step() {
+            return Err(Error::Request);
+        }
+        Ok(store.prepare_sandbox_request(
+            actor,
+            fence,
+            pending,
+            body.canonical_json()?,
+            &self.profile_fingerprint()?,
+        )?)
+    }
+    /// Check owned binding and actual declared profile BEFORE any GET, then fence the Store write.
+    /// Backend bearer checks still establish actual project authorization.
     pub async fn observe_binding(
         &self,
-        _binding: &hudson_core::sandbox_binding::Binding,
-    ) -> Result<ProbeObservation, Error> {
-        Err(Error::ProfileIdentityUnavailable)
+        store: &Store,
+        actor: &Actor,
+        fence: &Fence,
+        step: Step,
+        max_payload_bytes: usize,
+    ) -> Result<BoundObservation, Error> {
+        let binding = store.sandbox_binding(actor, fence, step.clone())?;
+        if binding.profile_fingerprint != self.profile_fingerprint()? {
+            return Err(Error::ProfileMismatch);
+        }
+        let (receipt, observation) = self
+            .fetch_receipt(&binding.pending, max_payload_bytes)
+            .await?;
+        if observation.decision == Decision::Reconcile {
+            return Err(Error::Reconcile);
+        }
+        let binding = store.record_sandbox_receipt(actor, fence, step, &receipt)?;
+        Ok(BoundObservation {
+            binding,
+            observation,
+        })
     }
     /// Inspects only the original bound ID. Never waits, cancels, retries, or mutates.
-    /// Profile identity is unverified until the SDK exposes its canonical origin/project.
+    /// This probe intentionally bypasses durable profile verification; its output is non-authoritative.
     pub async fn inspect_unverified(
         &self,
         pending: &PendingOperation,
         max_payload_bytes: usize,
     ) -> Result<ProbeObservation, Error> {
+        Ok(self.fetch_receipt(pending, max_payload_bytes).await?.1)
+    }
+    async fn fetch_receipt(
+        &self,
+        pending: &PendingOperation,
+        max_payload_bytes: usize,
+    ) -> Result<(Receipt, ProbeObservation), Error> {
         if !(1..=65536).contains(&max_payload_bytes) {
             return Err(Error::Request);
         }
@@ -125,12 +195,15 @@ impl QualificationObserver {
         let decision = pending.decision(Some(&receipt));
         // Unknown/expired/mismatched receipts cannot smuggle an apparent success result.
         let release = matches!(decision, Decision::Succeeded | Decision::Failed);
-        Ok(ProbeObservation {
-            decision,
-            result: if release { operation.result } else { None },
-            error: if release { operation.error } else { None },
-            output_status: operation.output_status,
-        })
+        Ok((
+            receipt,
+            ProbeObservation {
+                decision,
+                result: if release { operation.result } else { None },
+                error: if release { operation.error } else { None },
+                output_status: operation.output_status,
+            },
+        ))
     }
 }
 
