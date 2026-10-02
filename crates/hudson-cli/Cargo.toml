@@ -1,5 +1,6 @@
 [package]
 name = "hudson-cli"
+default-run = "hudson-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
