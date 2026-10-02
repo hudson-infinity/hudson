@@ -59,3 +59,31 @@ for a completion receipt. A 409 conflict is not admission. A 410 expired respons
 requires reconciliation, even when it retains an operation ID. The admission binder
 rejects other HTTP statuses and different existing identities/status URLs. Persist
 exact request bytes including the absolute command deadline before dispatch.
+
+## Durable request storage foundation
+
+`Store` sandbox binding methods persist an exact JSON request body and immutable
+idempotency key in the existing state document before consuming a single admission
+send intent. The binding belongs to the owning actor's run, its pending Sandbox
+Tool operation, the current admitted attempt, and the operation request digest.
+Registered tools and model operations cannot acquire this authority. Repeated
+preparation preserves the original bytes; changed bodies, metadata, or a key reused
+elsewhere under the same backend profile conflict. A 202 response binds IDs only. Unknown
+attempts permit receipt reconciliation without granting another send. Terminal
+receipt status is immutable, including destroy: requested cleanup is not confirmed
+cleanup.
+
+This is storage protocol infrastructure for #17, not a working sandbox executor.
+Production dispatch still rejects Sandbox execution. Its tests seed an admitted
+Running Sandbox Tool attempt explicitly; they do not demonstrate runtime approval
+or VM execution. The JSON restart and opt-in PostgreSQL reconnect tests demonstrate
+persistence and fencing. Transport, operator-approved package/command mapping,
+verified SDK endpoint/project identity binding, and real Linux/KVM validation remain
+required before enabling dispatch. The request also requires an immutable 64-character lowercase SHA256 profile
+fingerprint of canonical operator-bound origin plus project, excluding the token.
+The trusted worker constructor must verify and derive it; an agent-supplied label
+is insufficient. The store validates its encoding and immutability, not its
+provenance. Keys are unique across phases and Hudson workspaces sharing that
+backend profile. A future transport must verify that the actual SDK client origin
+and project produce the stored fingerprint before sending or polling. The current
+SDK does not expose that identity, so this remains an explicit live transport gate.
