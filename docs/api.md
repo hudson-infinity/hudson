@@ -36,6 +36,15 @@ After restarting the server, use the same configuration/database/namespace and
 explicitly resume interrupted runs. Unknown external effects need the separate
 [recovery workflow](recovery.md).
 
+Migration from the earlier preview API: an omitted `limit` now returns at most
+100 events rather than all remaining history. HTTP consumers must drain pages
+before treating history as complete; the array shape alone does not indicate
+completion. There is currently no published Hudson SDK to update. The CLI
+`hudson-cli events RUN_UUID --after N` reads one page, so repeat it with the last
+returned `sequence` until the result is `[]`. Automatic follow/draining is tracked
+in [#18](https://github.com/hudson-infinity/hudson/issues/18). Internal Rust
+`Store::events()` callers continue receiving the complete history.
+
 Event polling returns an array in ascending sequence order. `limit` defaults to
 100 and must be between 1 and 1000. After each nonempty page, set `after` to its
 last event's `sequence` and request the next page until it is empty. Retain that

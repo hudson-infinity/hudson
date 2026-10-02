@@ -54,6 +54,7 @@ pub enum Command {
     Operation {
         operation_id: String,
     },
+    /// Read one event page (default 100); continue with --after the last sequence.
     Events {
         run_id: String,
         #[arg(long, default_value_t = 0)]
