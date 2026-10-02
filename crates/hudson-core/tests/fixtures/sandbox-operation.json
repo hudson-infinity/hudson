@@ -1,0 +1,10 @@
+{
+  "operation_id": "op_01996110-7c00-7000-8000-000000000002",
+  "sandbox_id": "sbx_01996110-7c00-7000-8000-000000000001",
+  "kind": "execute",
+  "status": "succeeded",
+  "phase": "command_completed",
+  "output_status": "published",
+  "created_at": "2026-10-02T00:00:00Z",
+  "completed_at": "2026-10-02T00:00:01Z"
+}
