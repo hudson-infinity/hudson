@@ -138,6 +138,9 @@ Event reads return at most 100 entries by default. HTTP clients must advance
 `after` to the final sequence and drain pages until empty. `hudson-cli events
 RUN_UUID --after N` reads one page; repeat with the final sequence. See the
 [API migration guidance](docs/api.md) for limits and reconnect behavior.
+`hudson-cli follow RUN_UUID --after N` automatically drains pages and observes
+waits and terminal outcomes. Ctrl-C stops observation; retain the last processed
+sequence to reconnect.
 Child runs expose their pinned agent reference and can be resumed with the same
 tree configuration through either the API or worker. POST `/runs/{id}/resume` after a server
 restart. An approval wait includes an operation ID: inspect `/operations/{id}`,

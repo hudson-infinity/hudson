@@ -41,8 +41,7 @@ Migration from the earlier preview API: an omitted `limit` now returns at most
 before treating history as complete; the array shape alone does not indicate
 completion. There is currently no published Hudson SDK to update. The CLI
 `hudson-cli events RUN_UUID --after N` reads one page, so repeat it with the last
-returned `sequence` until the result is `[]`. Automatic follow/draining is tracked
-in [#18](https://github.com/hudson-infinity/hudson/issues/18). Internal Rust
+returned `sequence` until the result is `[]`. Use the `follow` command below for automatic draining and live observation. Internal Rust
 `Store::events()` callers continue receiving the complete history.
 
 Event polling returns an array in ascending sequence order. `limit` defaults to
@@ -62,6 +61,34 @@ are arbitrary JSON. Responses expose no executable checkpoint or credentials.
 A reply must include `input`, `request_key`, and the `question_id` copied from
 `run.wait.question_id`. Reuse all three when retrying the same answer. A changed
 answer under the same key or an answer for the wrong pending question conflicts.
+
+Follow a run without changing its execution state:
+
+```sh
+hudson-cli follow RUN_UUID --after 0
+# Reconnect from the final event sequence your client processed:
+hudson-cli follow RUN_UUID --after 123 --page-size 100 --poll-ms 1000
+```
+
+`follow` writes flushed JSON Lines: `type: "event"` records carry the original
+event plus `after`, and `type: "run"` records carry changed run status, waits,
+usage and the terminal result. It reads status before draining all event pages,
+so it includes final events before exiting on a terminal run. Waiting states
+remain observable; use a separate CLI command to reply, approve, resume or cancel.
+Ctrl-C stops observation only. Reconnect with `--after` set to the last event your
+consumer fully processed; replay is possible if that cursor was not retained.
+No checkpoint file is automatically written.
+
+Successful completion exits zero. Failed/cancelled runs, invalid responses,
+authentication failures and exhausted retries exit nonzero; errors include the
+last emitted cursor. On Unix, Ctrl-C uses the normal interrupt exit status.
+Transport failures, 429 and 5xx responses retry the same read up to
+`--max-retries` (default 5, range 0–10), with exponential delays capped at 30
+seconds. Each HTTP request times out after 15 seconds. Poll intervals range from
+50 to 60000 milliseconds; event pages from 1 to 1000. Each response is bounded to
+8 MiB; reduce page size for large event payloads. Invalid JSON, ordering, run
+identity and other HTTP errors stop immediately. The existing authentication,
+HTTPS/loopback URL restrictions and redirect rejection apply to this command.
 
 Provider usage may be absent. A zero `reported_model_calls` count means no usable
 provider reports were recorded, not that the task cost nothing. Parent usage

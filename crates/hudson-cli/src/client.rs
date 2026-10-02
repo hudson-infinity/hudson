@@ -39,6 +39,26 @@ pub fn execute(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let base = args.url.trim_end_matches('/');
     let response = match args.command {
+        Command::Follow {
+            run_id,
+            after,
+            page_size,
+            poll_ms,
+            max_retries,
+        } => {
+            return crate::follow::run(
+                &client,
+                base,
+                &segment(&run_id)?.to_ascii_lowercase(),
+                crate::follow::Options {
+                    after,
+                    page_size,
+                    poll_ms,
+                    max_retries,
+                },
+            )
+            .map_err(Into::into);
+        }
         Command::Health => client.get(format!("{base}/health")).send()?,
         Command::Capabilities => client.get(format!("{base}/capabilities")).send()?,
         Command::PublishTool { file } => client
