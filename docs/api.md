@@ -18,7 +18,7 @@ can be loaded at startup or published through authenticated catalog mode. Creden
 | `POST /runs` | Submit JSON input to the root agent; optionally deduplicate with `request_key` |
 | `GET /runs/{id}` | Read status, question/approval wait, usage and result |
 | `GET /runs/{id}/children` | Discover direct children and their statuses |
-| `GET /runs/{id}/events?after=0` | Poll events after an exclusive sequence cursor |
+| `GET /runs/{id}/events?after=0&limit=100` | Poll a bounded event page after an exclusive sequence cursor |
 | `POST /runs/{id}/resume` | Schedule continuation with the configured executor |
 | `POST /runs/{id}/input` | Record an answer for `question_id` and schedule continuation |
 | `POST /runs/{id}/cancel` | Request cancellation of the run and known children |
@@ -35,6 +35,15 @@ a nonterminal run; starting a new batch requires a new run.
 After restarting the server, use the same configuration/database/namespace and
 explicitly resume interrupted runs. Unknown external effects need the separate
 [recovery workflow](recovery.md).
+
+Event polling returns an array in ascending sequence order. `limit` defaults to
+100 and must be between 1 and 1000. After each nonempty page, set `after` to its
+last event's `sequence` and request the next page until it is empty. Retain that
+cursor to reconnect, and poll again for later events. A full page does not imply
+that more events exist. Even an empty page checks run ownership. These limits
+bound event counts, not payload bytes; arbitrary JSON payloads may still be large.
+The PostgreSQL backend still reads its namespace JSONB snapshot; paging avoids
+cloning and serializing the entire remaining history but does not change storage.
 
 The body limit is 64 KiB. Runtime errors use `{"error":"..."}`; malformed JSON,
 UUIDs, content types, and oversized bodies can receive plain-text framework
