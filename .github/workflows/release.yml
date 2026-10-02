@@ -29,33 +29,33 @@ jobs:
     steps:
       - name: Confirm CI passed for current main
         id: current
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const {data} = await github.rest.repos.getBranch({...context.repo, branch: 'main'});
             core.setOutput('passed', data.commit.sha === context.payload.workflow_run.head_sha);
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.current.outputs.passed == 'true'
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
       - name: Prepare release labels
         if: steps.current.outputs.passed == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             await require('./.github/scripts/automation.cjs').syncLabels(github, context.repo);
       - name: Update release PR or tag a merged release
         if: steps.current.outputs.passed == 'true'
         id: release
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           target-branch: main
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
       - name: Start required checks on bot PRs
         if: steps.current.outputs.passed == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PRS: ${{ steps.release.outputs.prs }}
         with:
