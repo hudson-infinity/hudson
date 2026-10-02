@@ -52,3 +52,10 @@ fields are serialization data, not an authority boundary. Structural validation
 rejects empty identities/keys and execute/destroy plans without a sandbox identity.
 Reproduce the selected schema with `scripts/extract-sandbox-operation-schema.py`
 against the verified pinned repository's `api/openapi.json`.
+
+Public v1 mutation keys are project-wide, 16–128 ASCII alphanumeric or `._-`.
+A 202 AdmittedResponse binds operation identities only; its status never substitutes
+for a completion receipt. A 409 conflict is not admission. A 410 expired response
+requires reconciliation, even when it retains an operation ID. The admission binder
+rejects other HTTP statuses and different existing identities/status URLs. Persist
+exact request bytes including the absolute command deadline before dispatch.

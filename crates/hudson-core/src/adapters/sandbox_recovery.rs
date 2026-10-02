@@ -32,6 +32,15 @@ pub struct Receipt {
     pub response_expired: bool,
 }
 
+/// Public v1 202 body. Admission is acceptance, never completion evidence.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Admission {
+    pub sandbox_id: String,
+    pub operation_id: String,
+    pub status: String,
+    pub status_url: String,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
     /// Exactly one admission attempt is permitted after persisting attempted=true.
@@ -47,12 +56,45 @@ pub enum Decision {
 }
 
 impl PendingOperation {
+    /// Bind a successful admission response after the original send intent was persisted.
+    /// Error bodies (including 409/410) never establish admission or completion.
+    pub fn admitted(&self, http_status: u16, body: &Admission) -> Option<Self> {
+        if http_status != 202
+            || !self.admission_attempted
+            || body.sandbox_id.is_empty()
+            || body.operation_id.is_empty()
+            || body.status_url != format!("/v1/operations/{}", body.operation_id)
+            || self
+                .sandbox_id
+                .as_ref()
+                .is_some_and(|id| id != &body.sandbox_id)
+            || self
+                .operation_id
+                .as_ref()
+                .is_some_and(|id| id != &body.operation_id)
+        {
+            return None;
+        }
+        let mut bound = self.clone();
+        bound.sandbox_id = Some(body.sandbox_id.clone());
+        bound.operation_id = Some(body.operation_id.clone());
+        // Reuse structural validation. The response's status is not a completion receipt.
+        if bound.decision(None) == Decision::Reconcile {
+            return None;
+        }
+        Some(bound)
+    }
+
     /// This checks structural consistency only. Ownership and immutable request binding
     /// must be checked by the durable store before calling this method.
     pub fn decision(&self, receipt: Option<&Receipt>) -> Decision {
         if self.run_id.trim().is_empty()
             || self.workspace_id.trim().is_empty()
-            || self.idempotency_key.trim().is_empty()
+            || !(16..=128).contains(&self.idempotency_key.len())
+            || !self
+                .idempotency_key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
             || self
                 .operation_id
                 .as_ref()
@@ -105,7 +147,7 @@ mod tests {
             run_id: "run".into(),
             workspace_id: "workspace".into(),
             step: Step::Execute,
-            idempotency_key: "stable-key".into(),
+            idempotency_key: "stable-key-000001".into(),
             sandbox_id: Some("sandbox".into()),
             operation_id: Some("operation".into()),
             admission_attempted: true,
@@ -160,6 +202,30 @@ mod tests {
         assert_eq!(restored.idempotency_key, original.idempotency_key);
     }
     #[test]
+    fn admission_is_only_acceptance_and_errors_never_bind() {
+        let body = Admission {
+            sandbox_id: "sandbox".into(),
+            operation_id: "operation".into(),
+            status: "succeeded".into(),
+            status_url: "/v1/operations/operation".into(),
+        };
+        let mut p = pending();
+        p.operation_id = None;
+        let bound = p.admitted(202, &body).unwrap();
+        assert_eq!(
+            bound.decision(None),
+            Decision::Inspect {
+                operation_id: "operation".into()
+            }
+        );
+        for status in [200, 409, 410, 500] {
+            assert!(p.admitted(status, &body).is_none());
+        }
+        let mut wrong = body.clone();
+        wrong.sandbox_id = "other".into();
+        assert!(p.admitted(202, &wrong).is_none());
+    }
+    #[test]
     fn malformed_plans_never_admit() {
         for field in 0..5 {
             let mut p = pending();
@@ -174,6 +240,16 @@ mod tests {
             }
             assert_eq!(p.decision(None), Decision::Reconcile);
         }
+        for key in ["too-short", "invalid key-000000", "nonascii-é-00000"] {
+            let mut p = pending();
+            p.operation_id = None;
+            p.admission_attempted = false;
+            p.idempotency_key = key.into();
+            assert_eq!(p.decision(None), Decision::Reconcile);
+        }
+        let mut p = pending();
+        p.idempotency_key = "x".repeat(129);
+        assert_eq!(p.decision(None), Decision::Reconcile);
         let mut p = pending();
         p.admission_attempted = false;
         assert_eq!(p.decision(Some(&receipt())), Decision::Reconcile);

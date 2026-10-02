@@ -2,6 +2,32 @@
   "$ref": "#/components/schemas/OperationBody",
   "components": {
     "schemas": {
+      "AdmittedResponse": {
+        "type": "object",
+        "properties": {
+          "sandbox_id": {
+            "$ref": "#/components/schemas/SandboxId"
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OperationStatus"
+          },
+          "status_url": {
+            "type": "string",
+            "pattern": "^/v1/operations/op_"
+          }
+        },
+        "required": [
+          "sandbox_id",
+          "operation_id",
+          "status",
+          "status_url"
+        ],
+        "additionalProperties": true,
+        "x-rust-model": true
+      },
       "OperationBody": {
         "type": "object",
         "properties": {

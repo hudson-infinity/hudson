@@ -28,6 +28,7 @@ def collect(value):
 
 
 collect({"$ref": "#/components/schemas/OperationBody"})
+collect({"$ref": "#/components/schemas/AdmittedResponse"})
 output = {"$ref": "#/components/schemas/OperationBody",
           "components": {"schemas": {key: schemas[key] for key in sorted(needed)}}}
 path = pathlib.Path(__file__).resolve().parents[1] / "crates/hudson-core/tests/fixtures/sandbox-operation-schema.json"
