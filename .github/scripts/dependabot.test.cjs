@@ -104,14 +104,12 @@ function refreshFixture({first = pr(), current = {...pr(), head: {...pr().head, 
   }, core: {info() {}, warning: value => calls.warnings.push(value)}};
 }
 
-test('behind branches use an expected head and explicitly run both required workflows', async () => {
+test('behind branches use the external updater and leave ordinary CI triggers intact', async () => {
   const {github, core, calls} = refreshFixture();
-  await refreshDependabotBranch(github, repo, 1, core, async () => {});
+  await refreshDependabotBranch(github, repo, 1, core, async () => {}, github.rest.pulls.updateBranch);
   assert.equal(calls.comparisons[0].basehead, 'abc...current-main');
   assert.equal(calls.updates[0].expected_head_sha, 'abc');
-  assert.deepEqual(calls.dispatches.map(call => call.workflow_id), ['ci.yml', 'pr-policy.yml']);
-  assert.equal(calls.dispatches[1].inputs.pull_request_number, '1');
-  assert.equal(calls.dispatches[0].ref, pr().head.ref);
+  assert.equal(calls.dispatches.length, 0);
 });
 
 test('current branches with active checks are not updated or repeatedly dispatched', async () => {
@@ -131,14 +129,14 @@ test('missing CI dispatches are recovered without changing an up-to-date branch'
 
 test('conflicting branches stay blocked and receive no synthetic success checks', async () => {
   const {github, core, calls} = refreshFixture({conflict: true});
-  assert.equal(await refreshDependabotBranch(github, repo, 1, core), false);
+  assert.equal(await refreshDependabotBranch(github, repo, 1, core, undefined, github.rest.pulls.updateBranch), false);
   assert.equal(calls.warnings.length, 1);
   assert.equal(calls.dispatches.length, 0);
 });
 
 test('an incomplete branch update is retried without blocking the remaining PRs', async () => {
   const {github, core, calls} = refreshFixture({current: pr()});
-  assert.equal(await refreshDependabotBranch(github, repo, 1, core, async () => {}), false);
+  assert.equal(await refreshDependabotBranch(github, repo, 1, core, async () => {}, github.rest.pulls.updateBranch), false);
   assert.equal(calls.warnings.length, 1);
   assert.equal(calls.dispatches.length, 0);
 });
@@ -149,4 +147,12 @@ test('branch refresh never touches human or fork PRs', async () => {
   assert.equal(calls.comparisons.length, 0);
   assert.equal(calls.updates.length, 0);
   assert.equal(calls.dispatches.length, 0);
+});
+
+test('missing external credentials never create approval-gated branch updates', async () => {
+  const {github, core, calls} = refreshFixture();
+  assert.equal(await refreshDependabotBranch(github, repo, 1, core), false);
+  assert.equal(calls.updates.length, 0);
+  assert.equal(calls.dispatches.length, 0);
+  assert.match(calls.warnings[0], /DEPENDABOT_UPDATE_TOKEN/);
 });
