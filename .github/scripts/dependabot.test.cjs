@@ -93,7 +93,7 @@ function refreshFixture({first = pr(), current = {...pr(), head: {...pr().head, 
           if (conflict) throw Object.assign(new Error('conflict'), {status: 422});
         },
       },
-      repos: {compareCommitsWithBasehead: async args => {
+      repos: {getBranch: async () => ({data: {commit: {sha: 'current-main'}}}), compareCommitsWithBasehead: async args => {
         calls.comparisons.push(args);
         return {data: {ahead_by: behind ? 1 : 0}};
       }},
@@ -107,7 +107,7 @@ function refreshFixture({first = pr(), current = {...pr(), head: {...pr().head, 
 test('behind branches use an expected head and explicitly run both required workflows', async () => {
   const {github, core, calls} = refreshFixture();
   await refreshDependabotBranch(github, repo, 1, core, async () => {});
-  assert.equal(calls.comparisons[0].basehead, 'abc...base');
+  assert.equal(calls.comparisons[0].basehead, 'abc...current-main');
   assert.equal(calls.updates[0].expected_head_sha, 'abc');
   assert.deepEqual(calls.dispatches.map(call => call.workflow_id), ['ci.yml', 'pr-policy.yml']);
   assert.equal(calls.dispatches[1].inputs.pull_request_number, '1');

@@ -49,8 +49,10 @@ async function refreshDependabotBranch(github, repo, number, core, wait = sleep)
   const repository = `${repo.owner}/${repo.repo}`;
   const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
   if (!eligible(pr, repository)) return false;
+  // A PR's base.sha is its original base snapshot, not the live branch tip.
+  const {data: base} = await github.rest.repos.getBranch({...repo, branch: pr.base.ref});
   const {data: comparison} = await github.rest.repos.compareCommitsWithBasehead({
-    ...repo, basehead: `${pr.head.sha}...${pr.base.sha}`,
+    ...repo, basehead: `${pr.head.sha}...${base.commit.sha}`,
   });
   let current = pr;
   let updated = false;
