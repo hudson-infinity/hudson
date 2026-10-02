@@ -1,0 +1,192 @@
+{
+  "$ref": "#/components/schemas/OperationBody",
+  "components": {
+    "schemas": {
+      "OperationBody": {
+        "type": "object",
+        "properties": {
+          "response_expired": {
+            "type": "boolean",
+            "default": false,
+            "x-rust-default": true,
+            "x-rust-omit-false": true
+          },
+          "operation_id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "sandbox_id": {
+            "$ref": "#/components/schemas/SandboxId"
+          },
+          "target_operation_id": {
+            "$ref": "#/components/schemas/OperationId",
+            "x-rust-optional": true
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "create",
+              "execute",
+              "destroy",
+              "cancel",
+              "file_write"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/OperationStatus"
+          },
+          "phase": {
+            "type": "string",
+            "x-rust-optional": true
+          },
+          "output_status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "uploading",
+              "published",
+              "expired"
+            ],
+            "x-rust-optional": true
+          },
+          "result": {
+            "$ref": "#/components/schemas/OperationResult",
+            "x-rust-json": true,
+            "x-rust-optional": true
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Operation failure/uncertainty details, including a stable code; distinct from an HTTP Problem.",
+            "x-rust-optional": true
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "completed_at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "x-rust-optional": true
+          }
+        },
+        "required": [
+          "operation_id",
+          "sandbox_id",
+          "kind",
+          "status",
+          "created_at"
+        ],
+        "additionalProperties": true,
+        "x-rust-model": true
+      },
+      "OperationId": {
+        "type": "string",
+        "pattern": "^op_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "OperationResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Kind-specific fields; no result is invented for unresolved execution. Fields can be added without changing operation identity.",
+        "properties": {
+          "sandbox_id": {
+            "$ref": "#/components/schemas/SandboxId"
+          },
+          "simulated": {
+            "type": "boolean"
+          },
+          "guest_reported": {
+            "type": "boolean"
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "signal": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stdout": {
+            "$ref": "#/components/schemas/OutputStats"
+          },
+          "stderr": {
+            "$ref": "#/components/schemas/OutputStats"
+          },
+          "target_operation_id": {
+            "$ref": "#/components/schemas/OperationId"
+          },
+          "target_status": {
+            "$ref": "#/components/schemas/OperationStatus"
+          },
+          "cancelled": {
+            "type": "boolean"
+          },
+          "dispatch_intent_absent": {
+            "type": "boolean"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8388608
+          },
+          "sha256": {
+            "$ref": "#/components/schemas/Sha256"
+          }
+        }
+      },
+      "OperationStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "cancelled",
+          "unknown"
+        ],
+        "description": "Current operation outcome. unknown requires reconciliation; never blindly resubmit the command."
+      },
+      "OutputStats": {
+        "type": "object",
+        "properties": {
+          "seen": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 18446744073709551615,
+            "x-rust-integer": "u64"
+          },
+          "stored": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10485760,
+            "x-rust-integer": "u64"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "seen",
+          "stored",
+          "truncated"
+        ],
+        "additionalProperties": true,
+        "x-rust-model": true
+      },
+      "SandboxId": {
+        "type": "string",
+        "pattern": "^sbx_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      },
+      "Sha256": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  }
+}

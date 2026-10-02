@@ -10,3 +10,5 @@ pub mod http_tools;
 pub mod anthropic;
 
 pub mod mcp;
+
+pub mod sandbox_recovery;
