@@ -60,6 +60,20 @@ pub enum Command {
         #[arg(long, default_value_t = 0)]
         after: u64,
     },
+    /// Follow durable events until terminal; Ctrl-C stops observation only.
+    Follow {
+        run_id: String,
+        /// Resume after the last fully processed event sequence.
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u64).range(1..=1000))]
+        page_size: u64,
+        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(50..=60000))]
+        poll_ms: u64,
+        /// Consecutive retries for each unavailable request; backoff caps at 30 seconds.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u32).range(0..=10))]
+        max_retries: u32,
+    },
     Approve {
         operation_id: String,
         #[arg(long)]
