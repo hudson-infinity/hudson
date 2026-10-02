@@ -20,6 +20,7 @@ pub struct Fence {
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Binding {
     pub fence: Fence,
+    pub operation_request_digest: String,
     /// Exact UTF-8 JSON bytes, including the caller's absolute deadline.
     pub body: String,
     /// SHA256 of canonical trusted operator origin+project, excluding credentials.
@@ -32,7 +33,7 @@ pub struct Binding {
 fn key(fence: &Fence, pending: &PendingOperation) -> String {
     format!("{}:{:?}", fence.operation_id, pending.step)
 }
-fn authorized(d: &Data, actor: &Actor, fence: &Fence, sending: bool) -> Result<()> {
+fn authorized(d: &Data, actor: &Actor, fence: &Fence, sending: bool) -> Result<String> {
     let run = d.run(actor, fence.run_id)?;
     let op = d
         .operations
@@ -79,7 +80,7 @@ fn authorized(d: &Data, actor: &Actor, fence: &Fence, sending: bool) -> Result<(
     {
         return Err(Error::Conflict("sandbox attempt fenced".into()));
     }
-    Ok(())
+    Ok(op.request_digest.clone())
 }
 impl Store {
     /// Persist before any transport send. Identical retries preserve the original bytes.
@@ -95,7 +96,7 @@ impl Store {
         profile_fingerprint: &str,
     ) -> Result<Binding> {
         self.transact(|d| {
-            authorized(d, actor, &fence, true)?;
+            let operation_request_digest = authorized(d, actor, &fence, true)?;
             if profile_fingerprint.len() != 64
                 || !profile_fingerprint
                     .bytes()
@@ -120,6 +121,7 @@ impl Store {
             let id = key(&fence, &pending);
             if let Some(existing) = d.sandbox_bindings.get(&id) {
                 if existing.fence == fence
+                    && existing.operation_request_digest == operation_request_digest
                     && existing.initial_pending == pending
                     && existing.body == body
                     && existing.profile_fingerprint == profile_fingerprint
@@ -138,6 +140,7 @@ impl Store {
             }
             let binding = Binding {
                 fence,
+                operation_request_digest,
                 body,
                 profile_fingerprint: profile_fingerprint.into(),
                 initial_pending: pending.clone(),
@@ -156,10 +159,13 @@ impl Store {
         step: crate::adapters::sandbox_recovery::Step,
     ) -> Result<Binding> {
         self.transact(|d| {
-            authorized(d, actor, fence, true)?;
+            let current_digest = authorized(d, actor, fence, true)?;
             let id = format!("{}:{step:?}", fence.operation_id);
             let binding = d.sandbox_bindings.get_mut(&id).ok_or(Error::NotFound)?;
-            if &binding.fence != fence || binding.pending.admission_attempted {
+            if &binding.fence != fence
+                || binding.operation_request_digest != current_digest
+                || binding.pending.admission_attempted
+            {
                 return Err(Error::Conflict(
                     "sandbox admission already attempted or fenced".into(),
                 ));
@@ -196,12 +202,12 @@ impl Store {
         admission: &Admission,
     ) -> Result<Binding> {
         self.transact(|d| {
-            authorized(d, actor, fence, false)?;
+            let current_digest = authorized(d, actor, fence, false)?;
             let binding = d
                 .sandbox_bindings
                 .get_mut(&format!("{}:{step:?}", fence.operation_id))
                 .ok_or(Error::NotFound)?;
-            if &binding.fence != fence {
+            if &binding.fence != fence || binding.operation_request_digest != current_digest {
                 return Err(Error::Denied);
             }
             binding.pending = binding
@@ -219,12 +225,12 @@ impl Store {
         receipt: &Receipt,
     ) -> Result<Binding> {
         self.transact(|d| {
-            authorized(d, actor, fence, false)?;
+            let current_digest = authorized(d, actor, fence, false)?;
             let binding = d
                 .sandbox_bindings
                 .get_mut(&format!("{}:{step:?}", fence.operation_id))
                 .ok_or(Error::NotFound)?;
-            if &binding.fence != fence {
+            if &binding.fence != fence || binding.operation_request_digest != current_digest {
                 return Err(Error::Denied);
             }
             let decision = binding.pending.decision(Some(receipt));
@@ -480,6 +486,39 @@ mod tests {
             .unwrap();
         assert!(store
             .prepare_sandbox_request(&actor, fence, pending, "{}".into(), PROFILE)
+            .is_err());
+    }
+    #[test]
+    fn original_operation_digest_fences_joint_request_changes() {
+        let (store, actor, fence, pending) = seeded(Store::default());
+        prepare(&store, &actor, &fence, &pending);
+        store
+            .transact(|d| {
+                let op = d.operations.get_mut(&fence.operation_id).unwrap();
+                let OperationRequest::Tool { call, .. } = &mut op.request else {
+                    unreachable!()
+                };
+                call.arguments = json!({"changed":true});
+                op.request_digest = definitions::digest(&(
+                    fence.operation_id,
+                    fence.run_id,
+                    &actor.workspace_id,
+                    &op.request,
+                ))?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(store
+            .begin_sandbox_admission(&actor, &fence, Step::Create)
+            .is_err());
+        assert!(store
+            .prepare_sandbox_request(
+                &actor,
+                fence,
+                pending,
+                "{ \"deadline\": 123 }".into(),
+                PROFILE
+            )
             .is_err());
     }
     #[test]
