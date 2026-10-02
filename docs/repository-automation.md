@@ -13,6 +13,8 @@ python3 scripts/configure_repository.py --apply  # requires authenticated gh adm
 ```
 
 The script updates only Hudson's named ruleset, preserving unrelated rules. It
+enables automatic deletion of PR branches after merge. `main` remains protected
+from deletion; branches with unmerged work are retained during manual cleanup. It
 also enables private vulnerability reports and GitHub Actions PR creation while
 keeping default workflow token permissions read-only. It verifies persisted
 merge settings and the ruleset. No administrator or bot bypass is configured.

@@ -67,6 +67,9 @@ approvals. `CI` fails if any validation job fails, is cancelled, or is skipped.
 Administrators and bots have no bypass. Force pushes and branch deletion are
 blocked. Only squash merging is enabled; do not use merge commits or rebase
 merges. Maintainers review correctness, tests, resource bounds, and compatibility.
+GitHub automatically deletes merged PR branches. After merging, switch back to
+`main`, update it, and prune obsolete local branches; retain work that has not
+been merged.
 
 ## Versions and releases
 
