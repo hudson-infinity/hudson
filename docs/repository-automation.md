@@ -64,13 +64,28 @@ queues it until branch requirements pass. The workflow never bypasses checks
 or executes code from the dependency branch.
 Repeated events preserve an existing approval and auto-merge request.
 
+For unattended branch updates, add an Actions secret named
+`DEPENDABOT_UPDATE_TOKEN`: a fine-grained personal access token restricted to
+`hudson-infinity/hudson` with **Pull requests: read and write**. The token is used
+only for GitHub's branch-update API; reviews, checks, and merge requests continue
+to use the built-in token. Rotate the secret before its token expires.
+
+GitHub now places PR workflows from `GITHUB_TOKEN`-created updates behind a
+maintainer approval gate. Explicitly dispatching CI does not remove that gate.
+An external credential avoids it. Without the secret, new Dependabot PRs can
+still be approved and queued, but automatic updates of behind branches pause
+with a warning instead of creating more approval-gated runs. See GitHub's
+[token trigger rules](https://docs.github.com/en/actions/concepts/security/github_token)
+and [branch-update permissions](https://docs.github.com/en/rest/pulls/pulls#update-a-pull-request-branch).
+
 The strict up-to-date requirement remains enabled. On main pushes and every
 15 minutes, the workflow updates eligible branches with missing main commits
 using GitHub's branch-update API and an expected head SHA. Conflicts stay blocked.
 The periodic sweep also covers merges whose token suppresses push workflows.
-Because `GITHUB_TOKEN` updates do not trigger ordinary push/PR workflows, it
-explicitly dispatches CI and PR-title checks on updated branches. An interrupted
-dispatch is recovered on the next sweep. New commits must pass CI again.
+The dedicated credential lets updated branches trigger normal CI and PR-title
+checks. Missing checks on an otherwise current branch can be dispatched again.
+Runs already awaiting approval from an older built-in-token update need a
+maintainer to approve them once. New commits must pass CI again.
 Harbor's real-worker fixture tests run in CI so Python dependency updates are
 tested alongside Rust updates. API-breaking updates need a compatibility fix
 before their queued merge can proceed.
