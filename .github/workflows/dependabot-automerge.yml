@@ -36,14 +36,19 @@ jobs:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPENDABOT_UPDATE_TOKEN: ${{ secrets.DEPENDABOT_UPDATE_TOKEN }}
         with:
           script: |
             const {enableDependabotAutoMerge, refreshDependabotBranch} = require('./.github/scripts/dependabot.cjs');
+            const updateClient = process.env.DEPENDABOT_UPDATE_TOKEN ? new github.constructor({
+              auth: process.env.DEPENDABOT_UPDATE_TOKEN, baseUrl: process.env.GITHUB_API_URL
+            }) : null;
+            const updateBranch = updateClient ? args => updateClient.rest.pulls.updateBranch(args) : null;
             const prs = context.payload.pull_request ? [context.payload.pull_request] :
               await github.paginate(github.rest.pulls.list, {...context.repo, state: 'open', base: 'main', per_page: 100});
             for (const pr of prs) {
               if (context.eventName !== 'pull_request_target') {
-                if (!await refreshDependabotBranch(github, context.repo, pr.number, core)) continue;
+                if (!await refreshDependabotBranch(github, context.repo, pr.number, core, undefined, updateBranch)) continue;
               }
               await enableDependabotAutoMerge(github, context.repo, pr.number, core);
             }
