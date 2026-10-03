@@ -45,7 +45,7 @@ async function enableDependabotAutoMerge(github, repo, number, core, merge = req
   core.info(`Approved #${number}; requested protected squash auto-merge.`);
 }
 
-async function refreshDependabotBranch(github, repo, number, core, wait = sleep) {
+async function refreshDependabotBranch(github, repo, number, core, wait = sleep, updateBranch = null) {
   const repository = `${repo.owner}/${repo.repo}`;
   const {data: pr} = await github.rest.pulls.get({...repo, pull_number: number});
   if (!eligible(pr, repository)) return false;
@@ -57,8 +57,12 @@ async function refreshDependabotBranch(github, repo, number, core, wait = sleep)
   let current = pr;
   let updated = false;
   if (comparison.ahead_by > 0) {
+    if (!updateBranch) {
+      core.warning(`Set DEPENDABOT_UPDATE_TOKEN to update #${number} without requiring workflow approval.`);
+      return false;
+    }
     try {
-      await github.rest.pulls.updateBranch({
+      await updateBranch({
         ...repo, pull_number: number, expected_head_sha: pr.head.sha,
       });
     } catch (error) {
@@ -79,9 +83,12 @@ async function refreshDependabotBranch(github, repo, number, core, wait = sleep)
       core.warning(`Branch update for #${number} has not completed; the next sweep will retry.`);
       return false;
     }
+    // An external credential triggers ordinary push/PR checks without the
+    // approval gate GitHub applies to GITHUB_TOKEN-created PR updates.
+    return true;
   }
-  // GITHUB_TOKEN branch updates do not trigger push/PR workflows. Dispatch them
-  // explicitly, and recover a missed dispatch if a previous sweep was stopped.
+  // Recover missing checks on an otherwise current branch. This does not clear
+  // a workflow-approval gate created by an older GITHUB_TOKEN branch update.
   const checks = await github.paginate(github.rest.checks.listForRef, {
     ...repo, ref: current.head.sha, filter: 'latest', per_page: 100,
   });
